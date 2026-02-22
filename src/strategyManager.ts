@@ -1,82 +1,99 @@
-import { startPumpListener } from "./screener.ts"
-import { runPumpfunTick } from "./agent.ts"
-import { runWeatherArbTick } from "./weatherArb.ts"
-import type {
-  AgentConfig,
-  AgentState,
-  WeatherArbConfig,
-  WeatherArbReading,
-  StrategyStatus,
-} from "./types.ts"
+import fs from "fs";
+import path from "path";
+import os from "os";
+import type { StrategyStatus, WeatherArbConfig, WeatherArbReading } from "./types.ts";
+import { runWeatherArbTick } from "./weatherArb.ts";
 
-const createStrategyManager = () => {
-  // ── Pumpfun state ──────────────────────────────────────────────────────────
-  let pumpfunIntervalId: NodeJS.Timeout | null = null
-  let pumpfunState: AgentState = { openPositions: [], tradeHistory: [], lastRunAt: null }
-  let pumpfunLastGraduations = 0
+// Shared file for Inter-Process Communication (IPC)
+const STATUS_FILE = path.join(os.homedir(), ".solana-agent-status.json");
 
-  // ── Weather Arb state ──────────────────────────────────────────────────────
-  let weatherArbIntervalId: NodeJS.Timeout | null = null
-  let weatherArbConfig: WeatherArbConfig | null = null
-  let weatherArbLastReading: WeatherArbReading | null = null
+export const createStrategyManager = () => {
+  let weatherArbIntervalId: NodeJS.Timeout | null = null;
+  let weatherArbConfig: WeatherArbConfig | null = null;
+  let weatherArbLastReading: WeatherArbReading | null = null;
 
-  // ── Pumpfun controls ───────────────────────────────────────────────────────
-  const startPumpfun = (config: AgentConfig): void => {
-    if (pumpfunIntervalId !== null) return  // already running
-    pumpfunState = { openPositions: [], tradeHistory: [], lastRunAt: null }
-    startPumpListener(() => { pumpfunLastGraduations++ })
-    pumpfunIntervalId = setInterval(() => {
-      runPumpfunTick(config, pumpfunState)
-        .then((s) => { pumpfunState = s })
-        .catch(console.error)
-    }, config.intervalSeconds * 1000)
-  }
+  // ── Persistence Logic ──────────────────────────────────────────────────────
 
-  const stopPumpfun = (): void => {
-    if (pumpfunIntervalId === null) return
-    clearInterval(pumpfunIntervalId)
-    pumpfunIntervalId = null
-  }
+  const saveStatusToDisk = () => {
+    const status = getStatus(true); // Get current live RAM state
+    try {
+      fs.writeFileSync(STATUS_FILE, JSON.stringify(status, null, 2));
+    } catch (e) {
+      // Silent fail to avoid crashing the trading loop
+    }
+  };
 
-  // ── Weather Arb controls ───────────────────────────────────────────────────
-  const startWeatherArb = (config: WeatherArbConfig): void => {
-    if (weatherArbIntervalId !== null) return
-    weatherArbConfig = config
-    const onReading = (r: WeatherArbReading) => { weatherArbLastReading = r }
-    // Run once immediately, then every intervalSeconds
-    runWeatherArbTick(config, onReading).catch(console.error)
-    weatherArbIntervalId = setInterval(() => {
-      runWeatherArbTick(config, onReading).catch(console.error)
-    }, config.intervalSeconds * 1000)
-  }
+  const getStatus = (forceLive = false): StrategyStatus => {
+    // If we are Process B (the status checker), read from the shared file
+    if (!forceLive && fs.existsSync(STATUS_FILE)) {
+      try {
+        const fileData = JSON.parse(fs.readFileSync(STATUS_FILE, "utf-8"));
+        // Check if file is stale (older than 10 mins)
+        const stats = fs.statSync(STATUS_FILE);
+        const ageMs = Date.now() - stats.mtimeMs;
 
-  const stopWeatherArb = (): void => {
-    if (weatherArbIntervalId === null) return
-    clearInterval(weatherArbIntervalId)
-    weatherArbIntervalId = null
-  }
+        return {
+          ...fileData,
+          // Optional: mark as STALE if ageMs > 600000
+        };
+      } catch (e) {
+        /* fallback to RAM */
+      }
+    }
 
-  // ── Status ─────────────────────────────────────────────────────────────────
-  const getStatus = (): StrategyStatus => ({
-    pumpfun: {
-      running: pumpfunIntervalId !== null,
-      lastGraduations: pumpfunLastGraduations,
-      lastCheckAt: pumpfunState.lastRunAt,
-    },
-    weather_arb: {
-      running: weatherArbIntervalId !== null,
-      lastNoaaTemp: weatherArbLastReading?.noaaForecast.forecastHighF ?? null,
-      lastMarketOdds: weatherArbLastReading?.kalshiImpliedOdds ?? null,
-      lastConfidence: weatherArbLastReading?.confidence ?? null,
-      lastCheckAt: weatherArbLastReading
-        ? new Date(weatherArbLastReading.fetchedAt).toISOString()
-        : null,
-      city: weatherArbConfig?.gridpointOffice ?? null,
-    },
-  })
+    // Default RAM state (used by the actual scanner process)
+    return {
+      pumpfun: {
+        running: false, // Update if you implement pumpfun loop here
+        lastGraduations: 0,
+        lastCheckAt: null,
+      },
+      weather_arb: {
+        running: weatherArbIntervalId !== null,
+        city: weatherArbConfig?.gridpointOffice ?? null,
+        lastNoaaTemp: weatherArbLastReading?.noaaForecast.forecastHighF ?? null,
+        lastMarketOdds: weatherArbLastReading?.kalshiImpliedOdds ?? null,
+        lastConfidence: weatherArbLastReading?.confidence ?? null,
+        lastCheckAt: weatherArbLastReading
+          ? new Date(weatherArbLastReading.fetchedAt).toISOString()
+          : null,
+      },
+    };
+  };
 
-  return { startPumpfun, stopPumpfun, startWeatherArb, stopWeatherArb, getStatus }
-}
+  // ── Scanner Logic ─────────────────────────────────────────────────────────
 
-// Singleton — shared by plugin.ts and CLI
-export const strategyManager = createStrategyManager()
+  const startWeatherArb = (config: WeatherArbConfig) => {
+    weatherArbConfig = config;
+
+    const onReading = (r: WeatherArbReading) => {
+      weatherArbLastReading = r;
+      saveStatusToDisk();
+    };
+
+    // Initial persist to show "RUNNING" immediately, then fire first tick
+    saveStatusToDisk();
+    runWeatherArbTick(config, onReading).catch(console.error);
+
+    weatherArbIntervalId = setInterval(
+      () => { runWeatherArbTick(config, onReading).catch(console.error); },
+      (config.intervalSeconds || 120) * 1000,
+    );
+  };
+
+  const stopWeatherArb = () => {
+    if (weatherArbIntervalId) {
+      clearInterval(weatherArbIntervalId);
+      weatherArbIntervalId = null;
+      saveStatusToDisk();
+    }
+  };
+
+  return {
+    startWeatherArb,
+    stopWeatherArb,
+    getStatus,
+  };
+};
+
+export const strategyManager = createStrategyManager();
