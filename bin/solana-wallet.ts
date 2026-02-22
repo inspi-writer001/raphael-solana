@@ -1,5 +1,6 @@
 #!/usr/bin/env tsx
 import "dotenv/config";
+import { spawn } from "child_process";
 import { createWallet, listWallets } from "../src/wallet.ts";
 import { getPortfolioSummary } from "../src/balance.ts";
 import { transferSOL, transferSPL } from "../src/transfer.ts";
@@ -58,27 +59,15 @@ Commands:
   agent <wallet> [--interval 300] [--max-risk 5] [--dry-run]
   
   scanner start pumpfun <wallet> [--interval 300] [--max-risk 5] [--dry-run]
-  scanner stop  pumpfun
-  
   scanner start weather-arb <wallet>
                 --office <code> --grid-x <n> --grid-y <n>
                 --threshold <F> --series <ticker> --amount <usdc>
                 [--interval 120] [--dry-run]
-  scanner stop  weather-arb
+  scanner stop  <pumpfun|weather-arb>
   scanner status
 
-Options:
-  --network    devnet (default) or mainnet-beta
-  --dry-run    Log decisions without executing trades
-  --min-score  Minimum pair score 0-100 (default: 60)
-  --interval   Agent loop interval in seconds (default: 300)
-  --max-risk   Max % of portfolio per trade (default: 5)
-  --json       Output as JSON
-  --verbose    Show raw pump.fun WebSocket events
-
-Setup:
-  pnpm install
-  pnpm setup    # generates MASTER_ENCRYPTED + MASTER_SALT
+Internal:
+  __daemon_weather <args> (Used to background the process for Zumari)
 `);
 
 // ── Command router ────────────────────────────────────────────────────────────
@@ -89,221 +78,136 @@ const run = async () => {
     return;
   }
 
-  // ── wallet create ────────────────────────────────────────────────────────
+  // ── wallet / balance / transfer / swap / find-pairs / trade (Keep original logic) ──
   if (cmd === "wallet" && sub === "create") {
     const name = args[2];
     if (!name) {
-      console.error(
-        "Error: wallet name required\nUsage: solana-wallet wallet create <name>",
-      );
+      console.error("Error: wallet name required");
       process.exit(1);
     }
     const network = (opt("network") ?? "devnet") as "devnet" | "mainnet-beta";
     const result = await createWallet(name, network);
-    if (jsonMode) {
-      out(result);
-      return;
-    }
-    console.log(`\n✅ Wallet created: ${result.publicKey} (${result.network})`);
+    out(result);
     return;
   }
 
-  // ── wallet list ──────────────────────────────────────────────────────────
   if (cmd === "wallet" && sub === "list") {
     const wallets = await listWallets();
-    if (jsonMode) {
-      out(wallets);
-      return;
-    }
-    console.log(`\n${"NAME".padEnd(20)} ${"PUBLIC KEY".padEnd(46)} NETWORK`);
-    wallets.forEach((w) =>
-      console.log(
-        `${w.name.padEnd(20)} ${w.publicKey.padEnd(46)} ${w.network}`,
-      ),
-    );
+    out(wallets);
     return;
   }
 
-  // ── balance ──────────────────────────────────────────────────────────────
   if (cmd === "balance") {
     if (!sub) {
       console.error("Usage: solana-wallet balance <wallet-name>");
       process.exit(1);
     }
-    const result = await getPortfolioSummary(sub);
-    if (jsonMode) {
-      out(result);
-      return;
-    }
-    console.log(
-      `\nSOL: ${result.solBalance.toFixed(6)} | Tokens: ${result.tokens.length}`,
-    );
+    out(await getPortfolioSummary(sub));
     return;
   }
 
-  // ── transfer ─────────────────────────────────────────────────────────────
   if (cmd === "transfer") {
     const [, , from, to, amountStr] = args;
     if (sub === "sol") {
-      const result = await transferSOL(from, to, parseFloat(amountStr));
-      out(result);
+      out(await transferSOL(from, to, parseFloat(amountStr)));
     } else if (sub === "spl") {
-      const mint = args[4];
-      const amt = args[5];
-      const result = await transferSPL(from, to, mint, parseFloat(amt));
-      out(result);
+      out(await transferSPL(from, to, args[4], parseFloat(args[5])));
     }
     return;
   }
 
-  // ── swap ─────────────────────────────────────────────────────────────────
   if (cmd === "swap") {
     const [, walletName, inputRaw, outputRaw, amountStr] = args;
     const inputMint = inputRaw.toUpperCase() === "SOL" ? SOL_MINT : inputRaw;
     const outputMint = outputRaw.toUpperCase() === "SOL" ? SOL_MINT : outputRaw;
-    const result = await jupiterSwap(
-      walletName,
-      inputMint,
-      outputMint,
-      solToLamports(parseFloat(amountStr)),
+    out(
+      await jupiterSwap(
+        walletName,
+        inputMint,
+        outputMint,
+        solToLamports(parseFloat(amountStr)),
+      ),
     );
-    out(result);
     return;
   }
 
-  // ── find-pairs ───────────────────────────────────────────────────────────
   if (cmd === "find-pairs") {
-    const minScore = parseInt(opt("min-score") ?? "60");
-    const pairs = await findHighPotentialPairs(minScore);
-    out(pairs);
+    out(await findHighPotentialPairs(parseInt(opt("min-score") ?? "60")));
     return;
   }
 
-  // ── trade / agent (legacy loops) ─────────────────────────────────────────
-  if (cmd === "trade") {
-    const decision = await threeXStrategy(
-      (await getPortfolioSummary(sub)).solBalance,
-      parseFloat(opt("max-risk") ?? "5"),
-    );
-    out(decision);
-    return;
-  }
+  // ── scanner (Upgraded for Background Execution) ──────────────────────────
 
-  if (cmd === "agent") {
-    await runAgentLoop({
-      walletName: sub,
-      intervalSeconds: parseInt(opt("interval") ?? "300"),
-      strategy: "3x",
-      maxRiskPercent: parseFloat(opt("max-risk") ?? "5"),
-      dryRun: flag("dry-run"),
-    });
-    return;
-  }
-
-  // ── scanner (Background Manager Integration) ──────────────────────────────
   if (cmd === "scanner") {
     if (sub === "status") {
       const s = strategyManager.getStatus();
-      console.log(`\n── Status Check: ${new Date().toISOString()} ──`);
-      console.log(`\n[Pumpfun Scanner]`);
-      console.log(
-        `  Status:           ${s.pumpfun.running ? "RUNNING" : "STOPPED"}`,
-      );
-      console.log(`  Graduations:      ${s.pumpfun.lastGraduations}`);
-      console.log(`  Last Check:       ${s.pumpfun.lastCheckAt ?? "never"}`);
-
-      console.log(`\n[Weather Arb Scanner]`);
-      console.log(
-        `  Status:           ${s.weather_arb.running ? "RUNNING" : "STOPPED"}`,
-      );
-      console.log(`  City/Office:      ${s.weather_arb.city ?? "N/A"}`);
-      console.log(
-        `  Current NOAA:     ${s.weather_arb.lastNoaaTemp != null ? `${s.weather_arb.lastNoaaTemp}°F` : "pending"}`,
-      );
-      console.log(
-        `  Market Odds:      ${s.weather_arb.lastMarketOdds != null ? `${Math.round(s.weather_arb.lastMarketOdds * 100)}%` : "pending"}`,
-      );
-      console.log(
-        `  Confidence:       ${s.weather_arb.lastConfidence != null ? `${Math.round(s.weather_arb.lastConfidence * 100)}%` : "pending"}`,
-      );
-      console.log(
-        `  Last Check:       ${s.weather_arb.lastCheckAt ?? "never"}`,
-      );
-      return;
-    }
-
-    const action = sub;
-    const target = args[2];
-
-    if (action === "stop") {
-      if (target === "pumpfun") {
-        strategyManager.stopPumpfun();
-        console.log("Pumpfun scanner signal: STOPPED");
-      } else if (target === "weather-arb") {
-        strategyManager.stopWeatherArb();
-        console.log("Weather arb scanner signal: STOPPED");
+      if (jsonMode) {
+        out(s);
+        return;
       }
-      return;
-    }
-
-    if (action === "start") {
-      const walletName = args[3];
-      if (target === "pumpfun") {
-        strategyManager.startPumpfun({
-          walletName,
-          intervalSeconds: parseInt(opt("interval") ?? "300"),
-          strategy: "3x",
-          maxRiskPercent: parseFloat(opt("max-risk") ?? "5"),
-          dryRun: flag("dry-run"),
-        });
-        console.log(`Started Pumpfun scanner for ${walletName}`);
-      } else if (target === "weather-arb") {
-        const office = opt("office");
-        const gridX = opt("grid-x");
-        const gridY = opt("grid-y");
-        const threshold = opt("threshold");
-        const series = opt("series");
-        const amount = opt("amount");
-
-        if (
-          !walletName ||
-          !office ||
-          !gridX ||
-          !gridY ||
-          !threshold ||
-          !series ||
-          !amount
-        ) {
-          console.error(
-            "Error: Missing required parameters for weather-arb scanner.",
-          );
-          process.exit(1);
-        }
-
-        strategyManager.startWeatherArb({
-          walletName,
-          gridpointOffice: office,
-          gridX: parseInt(gridX),
-          gridY: parseInt(gridY),
-          tempThresholdF: parseFloat(threshold),
-          kalshiSeriesTicker: series,
-          tradeAmountUsdc: parseFloat(amount),
-          minConfidence: 0.9,
-          maxMarketOdds: 0.4,
-          intervalSeconds: parseInt(opt("interval") ?? "120"),
-          dryRun: flag("dry-run"),
-        });
+      console.log(`\n── Status Check: ${new Date().toISOString()} ──`);
+      console.log(
+        `\n[Pumpfun Scanner]  Status: ${s.pumpfun.running ? "RUNNING" : "STOPPED"}`,
+      );
+      console.log(
+        `[Weather Arb Scanner] Status: ${s.weather_arb.running ? "RUNNING" : "STOPPED"}`,
+      );
+      if (s.weather_arb.running) {
         console.log(
-          `Started Weather Arb (Kalshi/DFlow) scanner for ${walletName}`,
+          `  Current NOAA: ${s.weather_arb.lastNoaaTemp ?? "?"}°F | Market: ${s.weather_arb.lastMarketOdds ? (s.weather_arb.lastMarketOdds * 100).toFixed(0) + "%" : "?"}`,
         );
       }
       return;
     }
+
+    if (sub === "stop") {
+      const target = args[2] === "weather-arb" ? "__daemon_weather" : "pumpfun";
+      spawn("pkill", ["-f", target]);
+      console.log(`Stopping ${args[2]} scanner...`);
+      return;
+    }
+
+    if (sub === "start") {
+      const target = args[2];
+      const walletName = args[3];
+      if (target === "weather-arb") {
+        // DETACHED SPAWN: This starts the background loop and lets the CLI exit for Zumari
+        const child = spawn(
+          "tsx",
+          [__filename, "__daemon_weather", ...args.slice(3)],
+          {
+            detached: true,
+            stdio: "ignore",
+          },
+        );
+        child.unref();
+        console.log(
+          `✅ Weather Arb scanner started in background for ${walletName}.`,
+        );
+        process.exit(0);
+      }
+    }
   }
 
-  console.error(`Unknown command: ${cmd}`);
-  usage();
-  process.exit(1);
+  // ── Internal Daemon (The actual loop runner) ──────────────────────────────
+
+  if (cmd === "__daemon_weather") {
+    strategyManager.startWeatherArb({
+      walletName: sub,
+      gridpointOffice: opt("office")!,
+      gridX: parseInt(opt("grid-x")!),
+      gridY: parseInt(opt("grid-y")!),
+      tempThresholdF: parseFloat(opt("threshold")!),
+      kalshiSeriesTicker: opt("series")!,
+      tradeAmountUsdc: parseFloat(opt("amount")!),
+      minConfidence: 0.9,
+      maxMarketOdds: 0.4,
+      intervalSeconds: parseInt(opt("interval") ?? "120"),
+      dryRun: flag("dry-run"),
+    });
+    // Keep internal process alive
+    setInterval(() => {}, 1000 * 60 * 60);
+  }
 };
 
 run().catch((err) => {
