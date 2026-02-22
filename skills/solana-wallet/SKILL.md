@@ -118,6 +118,41 @@ solana-wallet agent <wallet-name> --interval 300 --dry-run
 Note: this runs continuously and streams logs. Suggest running in a separate terminal
 or tmux session. Confirm dry-run vs live with the user first.
 
+### "Start weather arb for NYC" / "Monitor NYC temperature Polymarket"
+
+→ Call tool: `start_weather_arb`
+
+```yaml
+wallet_name: "trader1"
+target_city_coordinates:
+  office: "OKX"    # New York — see api.weather.gov for other office codes
+  grid_x: 33
+  grid_y: 35
+temp_threshold_f: 50
+yes_token_address: "<polymarket-yes-spl-mint>"
+trade_amount: 10
+dry_run: true
+```
+
+The scanner polls NOAA every 2 minutes and buys YES tokens on Jupiter when:
+- NOAA forecast confidence ≥ 90%
+- Jupiter-implied probability ≤ 40%
+
+Always start with `dry_run: true` and review readings before going live.
+
+### "Stop the weather arb scanner"
+
+→ Call tool: `stop_weather_arb`
+
+No parameters required.
+
+### "Check scanner status" / "What are the scanners doing?"
+
+→ Call tool: `get_strategy_status`
+
+No parameters required. Returns formatted status of both pumpfun and weather_arb
+scanners including latest NOAA temperature, confidence, and Jupiter odds.
+
 ## Rules
 
 - Always confirm before executing real trades (unless user explicitly says "just do it")

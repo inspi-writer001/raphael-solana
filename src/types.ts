@@ -174,3 +174,52 @@ export type AgentState = {
   tradeHistory: Trade[]
   lastRunAt: string | null
 }
+
+// ── Weather Arb ──────────────────────────────────────────────────────────────
+export type WeatherArbConfig = {
+  walletName: string
+  gridpointOffice: string   // e.g. "OKX" (New York), "LOT" (Chicago)
+  gridX: number
+  gridY: number
+  tempThresholdF: number    // e.g. 50  — the binary event temperature
+  yesTokenMint: string      // Polymarket YES SPL token mint on Solana
+  tradeAmountUsdc: number   // USDC to spend per buy (e.g. 10)
+  minConfidence: number     // default 0.90 (fire only when NOAA ≥ this confident)
+  maxJupiterOdds: number    // default 0.40 (buy only when market is this or cheaper)
+  intervalSeconds: number   // poll interval, default 120
+  dryRun: boolean
+}
+
+export type NoaaForecast = {
+  forecastHighF: number
+  periodName: string
+  shortForecast: string
+  isDaytime: boolean
+  fetchedAt: number
+}
+
+export type WeatherArbReading = {
+  noaaForecast: NoaaForecast
+  confidence: number         // 0-1 derived from threshold delta model
+  jupiterImpliedOdds: number // 0-1 (price per YES token in USDC)
+  edge: number               // confidence − jupiterImpliedOdds
+  hasEdge: boolean
+  fetchedAt: number
+}
+
+// ── Strategy Manager ─────────────────────────────────────────────────────────
+export type StrategyStatus = {
+  pumpfun: {
+    running: boolean
+    lastGraduations: number
+    lastCheckAt: string | null
+  }
+  weather_arb: {
+    running: boolean
+    lastNoaaTemp: number | null
+    lastJupiterOdds: number | null
+    lastConfidence: number | null
+    lastCheckAt: string | null
+    city: string | null           // human label derived from gridpointOffice
+  }
+}

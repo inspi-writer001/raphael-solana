@@ -7,6 +7,7 @@ import { jupiterSwap, solToLamports, SOL_MINT } from "../src/swap.ts"
 import { findHighPotentialPairs, getBufferStats } from "../src/screener.ts"
 import { threeXStrategy } from "../src/strategy.ts"
 import { runAgentLoop } from "../src/agent.ts"
+import { strategyManager } from "../src/strategyManager.ts"
 
 // ── Arg helpers ───────────────────────────────────────────────────────────────
 
@@ -48,6 +49,14 @@ Commands:
   find-pairs [--min-score 60]
   trade <wallet> [--strategy 3x] [--max-risk 5] [--dry-run]
   agent <wallet> [--interval 300] [--max-risk 5] [--dry-run]
+  scanner start pumpfun <wallet> [--interval 300] [--max-risk 5] [--dry-run]
+  scanner stop  pumpfun
+  scanner start weather-arb <wallet>
+                --office <code> --grid-x <n> --grid-y <n>
+                --threshold <F> --yes-token <mint> --amount <usdc>
+                [--dry-run]
+  scanner stop  weather-arb
+  scanner status
 
 Options:
   --network    devnet (default) or mainnet-beta
@@ -290,6 +299,105 @@ const run = async () => {
       dryRun: flag("dry-run"),
     })
     return
+  }
+
+  // ── scanner ───────────────────────────────────────────────────────────────
+
+  if (cmd === "scanner") {
+    // scanner status
+    if (sub === "status") {
+      const s = strategyManager.getStatus()
+      console.log(`\n── Pumpfun Scanner ─────────────────────`)
+      console.log(`  Running:          ${s.pumpfun.running}`)
+      console.log(`  Graduations seen: ${s.pumpfun.lastGraduations}`)
+      console.log(`  Last check:       ${s.pumpfun.lastCheckAt ?? "never"}`)
+      console.log(``)
+      console.log(`── Weather Arb Scanner ──────────────────`)
+      console.log(`  Running:          ${s.weather_arb.running}`)
+      console.log(`  City (office):    ${s.weather_arb.city ?? "not configured"}`)
+      console.log(`  NOAA forecast:    ${s.weather_arb.lastNoaaTemp != null ? `${s.weather_arb.lastNoaaTemp}°F` : "pending"}`)
+      console.log(`  Confidence:       ${s.weather_arb.lastConfidence != null ? `${Math.round(s.weather_arb.lastConfidence * 100)}%` : "pending"}`)
+      console.log(`  Jupiter odds:     ${s.weather_arb.lastJupiterOdds != null ? `${Math.round(s.weather_arb.lastJupiterOdds * 100)}%` : "pending"}`)
+      console.log(`  Last check:       ${s.weather_arb.lastCheckAt ?? "never"}`)
+      return
+    }
+
+    const scannerAction = sub           // "start" or "stop"
+    const scannerTarget = args[2]       // "pumpfun" or "weather-arb"
+
+    // scanner stop pumpfun
+    if (scannerAction === "stop" && scannerTarget === "pumpfun") {
+      strategyManager.stopPumpfun()
+      console.log("Pumpfun scanner stopped.")
+      return
+    }
+
+    // scanner stop weather-arb
+    if (scannerAction === "stop" && scannerTarget === "weather-arb") {
+      strategyManager.stopWeatherArb()
+      console.log("Weather arb scanner stopped.")
+      return
+    }
+
+    // scanner start pumpfun <wallet>
+    if (scannerAction === "start" && scannerTarget === "pumpfun") {
+      const walletName = args[3]
+      if (!walletName) {
+        console.error("Usage: solana-wallet scanner start pumpfun <wallet>")
+        process.exit(1)
+      }
+      strategyManager.startPumpfun({
+        walletName,
+        intervalSeconds: parseInt(opt("interval") ?? "300"),
+        strategy: "3x",
+        maxRiskPercent: parseFloat(opt("max-risk") ?? "5"),
+        dryRun: flag("dry-run"),
+      })
+      console.log(`Pumpfun scanner started for wallet "${walletName}". Process will keep running.`)
+      // setInterval keeps the process alive
+      return
+    }
+
+    // scanner start weather-arb <wallet>
+    if (scannerAction === "start" && scannerTarget === "weather-arb") {
+      const walletName = args[3]
+      const office = opt("office")
+      const gridX = opt("grid-x")
+      const gridY = opt("grid-y")
+      const threshold = opt("threshold")
+      const yesToken = opt("yes-token")
+      const amount = opt("amount")
+
+      if (!walletName || !office || !gridX || !gridY || !threshold || !yesToken || !amount) {
+        console.error(
+          "Usage: solana-wallet scanner start weather-arb <wallet>\n" +
+          "  --office <code> --grid-x <n> --grid-y <n>\n" +
+          "  --threshold <F> --yes-token <mint> --amount <usdc> [--dry-run]"
+        )
+        process.exit(1)
+      }
+
+      strategyManager.startWeatherArb({
+        walletName,
+        gridpointOffice: office,
+        gridX: parseInt(gridX),
+        gridY: parseInt(gridY),
+        tempThresholdF: parseFloat(threshold),
+        yesTokenMint: yesToken,
+        tradeAmountUsdc: parseFloat(amount),
+        minConfidence: 0.90,
+        maxJupiterOdds: 0.40,
+        intervalSeconds: parseInt(opt("interval") ?? "120"),
+        dryRun: flag("dry-run"),
+      })
+      console.log(`Weather arb scanner started for wallet "${walletName}". Process will keep running.`)
+      // setInterval keeps the process alive
+      return
+    }
+
+    console.error(`Unknown scanner subcommand: ${scannerAction} ${scannerTarget ?? ""}`)
+    usage()
+    process.exit(1)
   }
 
   console.error(`Unknown command: ${cmd}`)

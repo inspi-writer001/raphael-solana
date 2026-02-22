@@ -158,6 +158,55 @@ solana-wallet agent trader1 --interval 300 --max-risk 5 --dry-run
 
 ---
 
+### Background Scanner Manager
+
+#### `strategyManager.startPumpfun(config)` / `stopPumpfun()`
+
+Non-blocking `setInterval`-based pumpfun scanner. Wraps `runPumpfunTick` so the
+strategy runs on a timer rather than a blocking `while(true)` loop.
+
+```
+solana-wallet scanner start pumpfun trader1 --interval 300 --dry-run
+solana-wallet scanner stop  pumpfun
+solana-wallet scanner status
+```
+
+#### `strategyManager.startWeatherArb(config)` / `stopWeatherArb()`
+
+Polls NOAA gridpoint forecasts and Jupiter DEX to detect spread opportunities on
+Polymarket YES SPL tokens. Buys when NOAA confidence ≥ `minConfidence` (default 90%)
+and Jupiter implied odds ≤ `maxJupiterOdds` (default 40%).
+
+```
+solana-wallet scanner start weather-arb trader1 \
+  --office OKX --grid-x 33 --grid-y 35 \
+  --threshold 50 --yes-token <mint> --amount 10 --dry-run
+solana-wallet scanner stop  weather-arb
+```
+
+**Config parameters:**
+| Parameter | Default | Description |
+|---|---|---|
+| `--office` | required | NOAA office code (e.g. OKX=NYC, LOT=Chicago, SEW=Seattle) |
+| `--grid-x` | required | NOAA gridpoint X coordinate |
+| `--grid-y` | required | NOAA gridpoint Y coordinate |
+| `--threshold` | required | Temperature threshold in °F for the binary event |
+| `--yes-token` | required | Polymarket YES SPL token mint address (user-provided) |
+| `--amount` | required | USDC to spend per trade |
+| `--interval` | 120 | Poll interval in seconds |
+| `--dry-run` | false | Log decisions without executing trades |
+
+**Required environment variables:** same as existing (`SOLANA_RPC_URL`, `MASTER_ENCRYPTION_PASSWORD_CRYPTO`, `MASTER_ENCRYPTED`, `MASTER_SALT`).
+
+**OpenClaw plugin tools:**
+- `start_weather_arb` — start scanner with city + token config
+- `stop_weather_arb` — stop running scanner
+- `get_strategy_status` — formatted status of both scanners
+
+**Note:** Polymarket YES token mints are user-provided parameters. Find the correct mint for your market at [polymarket.com](https://polymarket.com) or via the Polymarket API.
+
+---
+
 ## Signal Sources
 
 | Source                     | Type      | Use                                       |
