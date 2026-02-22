@@ -117,15 +117,17 @@ export const fetchKalshiImpliedOdds = async (
   return { impliedOdds, thresholdBracketTicker }
 }
 
-// ── DFlow Mint Resolution (optional — requires DFLOW_API_KEY) ─────────────────
+// ── DFlow Mint Resolution ─────────────────────────────────────────────────────
 
 export const fetchDFlowYesMint = async (
   kalshiMarketTicker: string,
-  dflowApiKey: string,
+  dflowApiKey?: string,
 ): Promise<string> => {
   const series = kalshiMarketTicker.split("-")[0]
   const url = `${DFLOW_API}/markets?seriesTickers=${series}&status=active`
-  const res = await fetch(url, { headers: { "x-api-key": dflowApiKey, Accept: "application/json" } })
+  const headers: Record<string, string> = { Accept: "application/json" }
+  if (dflowApiKey) headers["x-api-key"] = dflowApiKey
+  const res = await fetch(url, { headers })
   if (!res.ok) {
     throw new Error(`DFlow markets failed (${res.status}): ${await res.text()}`)
   }
@@ -167,9 +169,8 @@ export const buildWeatherArbReading = async (
     await fetchKalshiImpliedOdds(config.kalshiSeriesTicker, config.tempThresholdF)
 
   let resolvedYesMint: string | null = null
-  const dflowKey = process.env["DFLOW_API_KEY"]
-  if (thresholdBracketTicker && dflowKey) {
-    resolvedYesMint = await fetchDFlowYesMint(thresholdBracketTicker, dflowKey)
+  if (thresholdBracketTicker) {
+    resolvedYesMint = await fetchDFlowYesMint(thresholdBracketTicker, process.env["DFLOW_API_KEY"])
       .catch(err => { console.warn(`[weather_arb] DFlow mint resolution failed: ${err}`); return null })
   }
 
@@ -204,11 +205,7 @@ export const runWeatherArbTick = async (
       `Kalshi odds: ${Math.round(reading.kalshiImpliedOdds * 100)}% | ` +
       `Edge: ${reading.hasEdge ? "YES" : "no"}`,
     )
-    if (reading.hasEdge && !config.dryRun) {
-      if (!reading.resolvedYesMint) {
-        console.warn("[weather_arb] Edge detected but DFLOW_API_KEY not set — set it to enable live execution")
-        return
-      }
+    if (reading.hasEdge && !config.dryRun && reading.resolvedYesMint) {
       await jupiterSwap(
         config.walletName,
         USDC_MAINNET_MINT,
