@@ -1,9 +1,11 @@
-import { jupiterQuote, jupiterSwap } from "./swap.ts"
+import { jupiterSwap } from "./swap.ts"
 import type { WeatherArbConfig, WeatherArbReading, NoaaForecast } from "./types.ts"
 
 export const USDC_MAINNET_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 
-const NOAA_API = "https://api.weather.gov"
+const NOAA_API  = "https://api.weather.gov"
+const KALSHI_API = "https://api.elections.kalshi.com/trade-api/v2"
+const DFLOW_API  = "https://prediction-markets-api.dflow.net/api/v1"
 
 // ── NOAA Forecast ─────────────────────────────────────────────────────────────
 
@@ -62,22 +64,91 @@ export const calculateConfidence = (forecastHighF: number, thresholdF: number): 
   return 0.10
 }
 
-// ── Jupiter Implied Odds ──────────────────────────────────────────────────────
+// ── Kalshi Oracle ─────────────────────────────────────────────────────────────
 
-export const fetchJupiterImpliedOdds = async (
-  yesTokenMint: string,
-  tradeAmountUsdc: number,
-): Promise<number> => {
-  const quote = await jupiterQuote(
-    USDC_MAINNET_MINT,
-    yesTokenMint,
-    tradeAmountUsdc * 1_000_000,
-  )
-  // Both USDC and Polymarket YES tokens use 6 decimals, so the ratio is unit-safe
-  const inAmount = Number(quote.inAmount)
-  const outAmount = Number(quote.outAmount)
-  if (outAmount === 0) throw new Error("Jupiter: outAmount is zero")
-  return inAmount / outAmount
+type KalshiMarket = {
+  ticker: string
+  yes_ask_dollars: string   // "0.4200" — price to buy YES (0–1 decimal)
+  status: string
+}
+
+const fetchKalshiMarkets = async (seriesTicker: string): Promise<KalshiMarket[]> => {
+  const url = `${KALSHI_API}/markets?series_ticker=${seriesTicker}&status=open`
+  const res = await fetch(url, { headers: { Accept: "application/json" } })
+  if (!res.ok) {
+    throw new Error(`Kalshi markets failed (${res.status}): ${await res.text()}`)
+  }
+  const data = await res.json() as { markets?: KalshiMarket[] }
+  return data.markets ?? []
+}
+
+// e.g. "KXHIGHNY-26FEB22-B50.5" → 50  (lowerBound = mid - 0.5)
+const parseBracketLowerBound = (ticker: string): number | null => {
+  const match = ticker.match(/-B(\d+\.?\d*)$/)
+  if (!match) return null
+  return parseFloat(match[1]) - 0.5
+}
+
+// P(high ≥ threshold) = Σ yes_ask_dollars for brackets where lowerBound ≥ threshold
+const sumBracketProbabilities = (markets: KalshiMarket[], thresholdF: number): number => {
+  let sum = 0
+  for (const m of markets) {
+    const lb = parseBracketLowerBound(m.ticker)
+    if (lb !== null && lb >= thresholdF) {
+      sum += parseFloat(m.yes_ask_dollars)
+    }
+  }
+  return Math.min(1, Math.max(0, sum))
+}
+
+// Find the bracket ticker whose lowerBound === thresholdF exactly
+const findThresholdBracketTicker = (markets: KalshiMarket[], thresholdF: number): string | null => {
+  const hit = markets.find(m => parseBracketLowerBound(m.ticker) === thresholdF)
+  return hit?.ticker ?? null
+}
+
+export const fetchKalshiImpliedOdds = async (
+  seriesTicker: string,
+  thresholdF: number,
+): Promise<{ impliedOdds: number; thresholdBracketTicker: string | null }> => {
+  const markets = await fetchKalshiMarkets(seriesTicker)
+  const impliedOdds = sumBracketProbabilities(markets, thresholdF)
+  const thresholdBracketTicker = findThresholdBracketTicker(markets, thresholdF)
+  return { impliedOdds, thresholdBracketTicker }
+}
+
+// ── DFlow Mint Resolution (optional — requires DFLOW_API_KEY) ─────────────────
+
+export const fetchDFlowYesMint = async (
+  kalshiMarketTicker: string,
+  dflowApiKey: string,
+): Promise<string> => {
+  const series = kalshiMarketTicker.split("-")[0]
+  const url = `${DFLOW_API}/markets?seriesTickers=${series}&status=active`
+  const res = await fetch(url, { headers: { "x-api-key": dflowApiKey, Accept: "application/json" } })
+  if (!res.ok) {
+    throw new Error(`DFlow markets failed (${res.status}): ${await res.text()}`)
+  }
+  const data = await res.json()
+  // Log raw shape on first call to assist field discovery
+  console.debug("[weather_arb] DFlow raw response:", JSON.stringify(data).slice(0, 400))
+
+  // Try common field paths for the YES-outcome SPL mint
+  const markets: unknown[] = Array.isArray(data) ? data : (data as Record<string, unknown>).markets as unknown[] ?? []
+  for (const m of markets) {
+    const mObj = m as Record<string, unknown>
+    if (typeof mObj["ticker"] === "string" && mObj["ticker"] !== kalshiMarketTicker) continue
+    // Try known field paths
+    const mint =
+      (mObj["yesMint"] as string | undefined) ??
+      ((mObj["yesOutcome"] as Record<string, unknown> | undefined)?.["mint"] as string | undefined) ??
+      ((Array.isArray(mObj["outcomes"]) ? (mObj["outcomes"] as Record<string, unknown>[])[0]?.["mint"] : undefined) as string | undefined)
+    if (!mint || typeof mint !== "string") {
+      throw new Error(`DFlow: no mint field found for ${kalshiMarketTicker}. Raw: ${JSON.stringify(m).slice(0, 200)}`)
+    }
+    return mint
+  }
+  throw new Error(`DFlow: market ${kalshiMarketTicker} not found in response`)
 }
 
 // ── Combined Reading ──────────────────────────────────────────────────────────
@@ -91,20 +162,29 @@ export const buildWeatherArbReading = async (
     config.gridY,
   )
   const confidence = calculateConfidence(noaaForecast.forecastHighF, config.tempThresholdF)
-  const jupiterImpliedOdds = await fetchJupiterImpliedOdds(
-    config.yesTokenMint,
-    config.tradeAmountUsdc,
-  )
-  const edge = confidence - jupiterImpliedOdds
+
+  const { impliedOdds: kalshiImpliedOdds, thresholdBracketTicker } =
+    await fetchKalshiImpliedOdds(config.kalshiSeriesTicker, config.tempThresholdF)
+
+  let resolvedYesMint: string | null = null
+  const dflowKey = process.env["DFLOW_API_KEY"]
+  if (thresholdBracketTicker && dflowKey) {
+    resolvedYesMint = await fetchDFlowYesMint(thresholdBracketTicker, dflowKey)
+      .catch(err => { console.warn(`[weather_arb] DFlow mint resolution failed: ${err}`); return null })
+  }
+
+  const edge = confidence - kalshiImpliedOdds
   const hasEdge =
-    confidence >= config.minConfidence && jupiterImpliedOdds <= config.maxJupiterOdds
+    confidence >= config.minConfidence && kalshiImpliedOdds <= config.maxMarketOdds
 
   return {
     noaaForecast,
     confidence,
-    jupiterImpliedOdds,
+    kalshiImpliedOdds,
     edge,
     hasEdge,
+    thresholdBracketTicker,
+    resolvedYesMint,
     fetchedAt: Date.now(),
   }
 }
@@ -121,19 +201,23 @@ export const runWeatherArbTick = async (
     console.log(
       `[weather_arb] NOAA: ${reading.noaaForecast.forecastHighF}°F | ` +
       `Confidence: ${Math.round(reading.confidence * 100)}% | ` +
-      `Jupiter odds: ${Math.round(reading.jupiterImpliedOdds * 100)}% | ` +
+      `Kalshi odds: ${Math.round(reading.kalshiImpliedOdds * 100)}% | ` +
       `Edge: ${reading.hasEdge ? "YES" : "no"}`,
     )
     if (reading.hasEdge && !config.dryRun) {
+      if (!reading.resolvedYesMint) {
+        console.warn("[weather_arb] Edge detected but DFLOW_API_KEY not set — set it to enable live execution")
+        return
+      }
       await jupiterSwap(
         config.walletName,
         USDC_MAINNET_MINT,
-        config.yesTokenMint,
+        reading.resolvedYesMint,
         config.tradeAmountUsdc * 1_000_000,
       )
     } else if (reading.hasEdge && config.dryRun) {
       console.log(
-        `[weather_arb] [dry-run] Would buy ${config.tradeAmountUsdc} USDC of YES token`,
+        `[weather_arb] [dry-run] Would buy ${config.tradeAmountUsdc} USDC → ${reading.thresholdBracketTicker ?? "YES token"}`,
       )
     }
   } catch (err) {

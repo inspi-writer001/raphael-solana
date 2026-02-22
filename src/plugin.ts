@@ -20,7 +20,7 @@ export default function register(api: OpenClawAPI): void {
     {
       name: "start_weather_arb",
       description:
-        "Start the Polymarket weather arbitrage scanner. Polls NOAA every 2 min and buys YES tokens on Jupiter when the spread is favourable.",
+        "Start the Kalshi weather arbitrage scanner. Polls NOAA every 2 min and buys YES tokens via Jupiter when Kalshi bracket-sum probability is below confidence threshold.",
       parameters: {
         type: "object",
         properties: {
@@ -39,9 +39,9 @@ export default function register(api: OpenClawAPI): void {
             type: "number",
             description: "Temperature threshold in Fahrenheit",
           },
-          yes_token_address: {
+          kalshi_series_ticker: {
             type: "string",
-            description: "Polymarket YES SPL token mint on Solana",
+            description: "Kalshi series ticker for the city weather market, e.g. KXHIGHNY (NYC high), KXHIGHCHI (Chicago high), KXHIGHLA (LA high)",
           },
           trade_amount: {
             type: "number",
@@ -53,7 +53,7 @@ export default function register(api: OpenClawAPI): void {
           "wallet_name",
           "target_city_coordinates",
           "temp_threshold_f",
-          "yes_token_address",
+          "kalshi_series_ticker",
           "trade_amount",
         ],
       },
@@ -62,7 +62,7 @@ export default function register(api: OpenClawAPI): void {
           wallet_name: string
           target_city_coordinates: { office: string; grid_x: number; grid_y: number }
           temp_threshold_f: number
-          yes_token_address: string
+          kalshi_series_ticker: string
           trade_amount: number
           dry_run?: boolean
         }
@@ -72,10 +72,10 @@ export default function register(api: OpenClawAPI): void {
           gridX: p.target_city_coordinates.grid_x,
           gridY: p.target_city_coordinates.grid_y,
           tempThresholdF: p.temp_threshold_f,
-          yesTokenMint: p.yes_token_address,
+          kalshiSeriesTicker: p.kalshi_series_ticker,
           tradeAmountUsdc: p.trade_amount,
           minConfidence: 0.90,
-          maxJupiterOdds: 0.40,
+          maxMarketOdds: 0.40,
           intervalSeconds: 120,
           dryRun: p.dry_run ?? true,
         })
@@ -119,7 +119,7 @@ export default function register(api: OpenClawAPI): void {
           `  City (office):    ${s.weather_arb.city ?? "not configured"}`,
           `  NOAA forecast:    ${s.weather_arb.lastNoaaTemp != null ? `${s.weather_arb.lastNoaaTemp}°F` : "pending"}`,
           `  Confidence:       ${s.weather_arb.lastConfidence != null ? `${Math.round(s.weather_arb.lastConfidence * 100)}%` : "pending"}`,
-          `  Jupiter odds:     ${s.weather_arb.lastJupiterOdds != null ? `${Math.round(s.weather_arb.lastJupiterOdds * 100)}%` : "pending"}`,
+          `  Market odds:      ${s.weather_arb.lastMarketOdds != null ? `${Math.round(s.weather_arb.lastMarketOdds * 100)}%` : "pending"}`,
           `  Last check:       ${s.weather_arb.lastCheckAt ?? "never"}`,
         ]
         return { content: [{ type: "text" as const, text: lines.join("\n") }] }

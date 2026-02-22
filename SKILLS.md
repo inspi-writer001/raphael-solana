@@ -173,14 +173,15 @@ solana-wallet scanner status
 
 #### `strategyManager.startWeatherArb(config)` / `stopWeatherArb()`
 
-Polls NOAA gridpoint forecasts and Jupiter DEX to detect spread opportunities on
-Polymarket YES SPL tokens. Buys when NOAA confidence ≥ `minConfidence` (default 90%)
-and Jupiter implied odds ≤ `maxJupiterOdds` (default 40%).
+Polls NOAA gridpoint forecasts and Kalshi bracket markets to detect spread opportunities.
+Buys when NOAA confidence ≥ `minConfidence` (default 90%) and Kalshi bracket-sum
+probability ≤ `maxMarketOdds` (default 40%). SPL mint resolved via DFlow API when
+`DFLOW_API_KEY` is set; without it, the scanner runs read-only regardless of `--dry-run`.
 
 ```
 solana-wallet scanner start weather-arb trader1 \
   --office OKX --grid-x 33 --grid-y 35 \
-  --threshold 50 --yes-token <mint> --amount 10 --dry-run
+  --threshold 50 --series KXHIGHNY --amount 10 --dry-run
 solana-wallet scanner stop  weather-arb
 ```
 
@@ -191,19 +192,18 @@ solana-wallet scanner stop  weather-arb
 | `--grid-x` | required | NOAA gridpoint X coordinate |
 | `--grid-y` | required | NOAA gridpoint Y coordinate |
 | `--threshold` | required | Temperature threshold in °F for the binary event |
-| `--yes-token` | required | Polymarket YES SPL token mint address (user-provided) |
+| `--series` | required | Kalshi series ticker (e.g. KXHIGHNY, KXHIGHCHI, KXHIGHLA) |
 | `--amount` | required | USDC to spend per trade |
 | `--interval` | 120 | Poll interval in seconds |
 | `--dry-run` | false | Log decisions without executing trades |
 
 **Required environment variables:** same as existing (`SOLANA_RPC_URL`, `MASTER_ENCRYPTION_PASSWORD_CRYPTO`, `MASTER_ENCRYPTED`, `MASTER_SALT`).
+**Optional:** `DFLOW_API_KEY` — enables live execution by resolving the YES-outcome SPL mint from the Kalshi ticker.
 
 **OpenClaw plugin tools:**
-- `start_weather_arb` — start scanner with city + token config
+- `start_weather_arb` — start scanner with city + Kalshi series config
 - `stop_weather_arb` — stop running scanner
 - `get_strategy_status` — formatted status of both scanners
-
-**Note:** Polymarket YES token mints are user-provided parameters. Find the correct mint for your market at [polymarket.com](https://polymarket.com) or via the Polymarket API.
 
 ---
 

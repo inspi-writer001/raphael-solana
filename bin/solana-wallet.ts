@@ -53,7 +53,7 @@ Commands:
   scanner stop  pumpfun
   scanner start weather-arb <wallet>
                 --office <code> --grid-x <n> --grid-y <n>
-                --threshold <F> --yes-token <mint> --amount <usdc>
+                --threshold <F> --series <ticker> --amount <usdc>
                 [--dry-run]
   scanner stop  weather-arb
   scanner status
@@ -317,7 +317,7 @@ const run = async () => {
       console.log(`  City (office):    ${s.weather_arb.city ?? "not configured"}`)
       console.log(`  NOAA forecast:    ${s.weather_arb.lastNoaaTemp != null ? `${s.weather_arb.lastNoaaTemp}°F` : "pending"}`)
       console.log(`  Confidence:       ${s.weather_arb.lastConfidence != null ? `${Math.round(s.weather_arb.lastConfidence * 100)}%` : "pending"}`)
-      console.log(`  Jupiter odds:     ${s.weather_arb.lastJupiterOdds != null ? `${Math.round(s.weather_arb.lastJupiterOdds * 100)}%` : "pending"}`)
+      console.log(`  Market odds:      ${s.weather_arb.lastMarketOdds != null ? `${Math.round(s.weather_arb.lastMarketOdds * 100)}%` : "pending"}`)
       console.log(`  Last check:       ${s.weather_arb.lastCheckAt ?? "never"}`)
       return
     }
@@ -365,14 +365,14 @@ const run = async () => {
       const gridX = opt("grid-x")
       const gridY = opt("grid-y")
       const threshold = opt("threshold")
-      const yesToken = opt("yes-token")
+      const series = opt("series")
       const amount = opt("amount")
 
-      if (!walletName || !office || !gridX || !gridY || !threshold || !yesToken || !amount) {
+      if (!walletName || !office || !gridX || !gridY || !threshold || !series || !amount) {
         console.error(
           "Usage: solana-wallet scanner start weather-arb <wallet>\n" +
           "  --office <code> --grid-x <n> --grid-y <n>\n" +
-          "  --threshold <F> --yes-token <mint> --amount <usdc> [--dry-run]"
+          "  --threshold <F> --series <ticker> --amount <usdc> [--dry-run]"
         )
         process.exit(1)
       }
@@ -383,10 +383,10 @@ const run = async () => {
         gridX: parseInt(gridX),
         gridY: parseInt(gridY),
         tempThresholdF: parseFloat(threshold),
-        yesTokenMint: yesToken,
+        kalshiSeriesTicker: series,
         tradeAmountUsdc: parseFloat(amount),
         minConfidence: 0.90,
-        maxJupiterOdds: 0.40,
+        maxMarketOdds: 0.40,
         intervalSeconds: parseInt(opt("interval") ?? "120"),
         dryRun: flag("dry-run"),
       })

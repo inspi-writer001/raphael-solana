@@ -107,7 +107,7 @@ solana-wallet scanner start pumpfun <wallet> [--interval 300] [--max-risk 5] [--
 solana-wallet scanner stop  pumpfun
 solana-wallet scanner start weather-arb <wallet>
               --office <code> --grid-x <n> --grid-y <n>
-              --threshold <F> --yes-token <mint> --amount <usdc>
+              --threshold <F> --series <ticker> --amount <usdc>
               [--interval 120] [--dry-run]
 solana-wallet scanner stop  weather-arb
 solana-wallet scanner status
@@ -121,10 +121,20 @@ solana-wallet scanner status
 | `--grid-x` | required | NOAA gridpoint X coordinate |
 | `--grid-y` | required | NOAA gridpoint Y coordinate |
 | `--threshold` | required | Temperature in °F that the binary event is priced on |
-| `--yes-token` | required | Polymarket YES SPL token mint on Solana |
+| `--series` | required | Kalshi series ticker (e.g. KXHIGHNY, KXHIGHCHI, KXHIGHLA) |
 | `--amount` | required | USDC to spend per trade |
 | `--interval` | 120 | Poll interval in seconds |
 | `--dry-run` | false | Log decisions without executing trades |
+
+### Known Kalshi series tickers
+
+| City | Series ticker | NOAA office |
+|---|---|---|
+| New York City | `KXHIGHNY` | OKX |
+| Chicago | `KXHIGHCHI` | LOT |
+| Los Angeles | `KXHIGHLA` | LOX |
+| Miami | `KXHIGHMI` | MFL |
+| Austin | `KXHIGHAU` | EWX |
 
 ## Security model
 
@@ -150,11 +160,13 @@ wallet private key                 (AES-256-GCM encrypted, in ~/.solana-agent-wa
 
 ## The weather arbitrage strategy
 
-Exploits the spread between NOAA gridpoint temperature forecasts and Polymarket binary-outcome YES token prices on Jupiter.
+Exploits the spread between NOAA gridpoint temperature forecasts and Kalshi bracket-sum probability for the same city.
 
 **Edge fires when both conditions hold:**
 - NOAA forecast confidence ≥ 90%
-- Jupiter-implied probability ≤ 40% (market underpricing the event)
+- Kalshi bracket-sum probability ≤ 40% (market underpricing the event)
+
+P(high ≥ threshold) is computed by summing `yes_ask_dollars` across all open Kalshi brackets where `lowerBound ≥ threshold`. Execution swaps USDC for the YES-outcome SPL token via Jupiter. Set `DFLOW_API_KEY` to enable live execution (DFlow resolves the SPL mint from the Kalshi ticker). Without the key, the scanner runs in read-only mode regardless of `--dry-run`.
 
 **Confidence model:**
 
@@ -192,7 +204,7 @@ src/
   screener.ts         pump.fun WebSocket + scoring
   strategy.ts         3x decision engine
   agent.ts            runPumpfunTick (one tick) + runAgentLoop (CLI blocking loop)
-  weatherArb.ts       NOAA fetch, confidence model, Jupiter implied odds, tick
+  weatherArb.ts       NOAA fetch, confidence model, Kalshi bracket-sum oracle, tick
   strategyManager.ts  setInterval singleton managing both scanners
   plugin.ts           OpenClaw plugin entry point (3 tools)
   types.ts            all TypeScript types

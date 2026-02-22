@@ -66,7 +66,7 @@ const createStrategyManager = () => {
     weather_arb: {
       running: weatherArbIntervalId !== null,
       lastNoaaTemp: weatherArbLastReading?.noaaForecast.forecastHighF ?? null,
-      lastJupiterOdds: weatherArbLastReading?.jupiterImpliedOdds ?? null,
+      lastMarketOdds: weatherArbLastReading?.kalshiImpliedOdds ?? null,
       lastConfidence: weatherArbLastReading?.confidence ?? null,
       lastCheckAt: weatherArbLastReading
         ? new Date(weatherArbLastReading.fetchedAt).toISOString()

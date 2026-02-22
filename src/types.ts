@@ -182,10 +182,10 @@ export type WeatherArbConfig = {
   gridX: number
   gridY: number
   tempThresholdF: number    // e.g. 50  — the binary event temperature
-  yesTokenMint: string      // Polymarket YES SPL token mint on Solana
+  kalshiSeriesTicker: string  // e.g. "KXHIGHNY", "KXHIGHCHI", "KXHIGHLA"
   tradeAmountUsdc: number   // USDC to spend per buy (e.g. 10)
   minConfidence: number     // default 0.90 (fire only when NOAA ≥ this confident)
-  maxJupiterOdds: number    // default 0.40 (buy only when market is this or cheaper)
+  maxMarketOdds: number     // default 0.40 (buy only when market is this or cheaper)
   intervalSeconds: number   // poll interval, default 120
   dryRun: boolean
 }
@@ -200,10 +200,12 @@ export type NoaaForecast = {
 
 export type WeatherArbReading = {
   noaaForecast: NoaaForecast
-  confidence: number         // 0-1 derived from threshold delta model
-  jupiterImpliedOdds: number // 0-1 (price per YES token in USDC)
-  edge: number               // confidence − jupiterImpliedOdds
+  confidence: number              // 0-1 derived from threshold delta model
+  kalshiImpliedOdds: number       // 0-1 bracket-sum probability from Kalshi
+  edge: number                    // confidence − kalshiImpliedOdds
   hasEdge: boolean
+  thresholdBracketTicker: string | null  // Kalshi ticker at threshold (for execution)
+  resolvedYesMint: string | null         // SPL mint from DFlow (null if no API key)
   fetchedAt: number
 }
 
@@ -217,7 +219,7 @@ export type StrategyStatus = {
   weather_arb: {
     running: boolean
     lastNoaaTemp: number | null
-    lastJupiterOdds: number | null
+    lastMarketOdds: number | null
     lastConfidence: number | null
     lastCheckAt: string | null
     city: string | null           // human label derived from gridpointOffice
