@@ -27,9 +27,11 @@ export const SOLANA_RPC_URL = optional(
 export const RAPHAEL_DATA_DIR =
   process.env["RAPHAEL_DATA_DIR"] ?? path.join(os.homedir(), ".raphael")
 
-// Wallet store path
-export const WALLET_STORE_PATH =
-  process.env["WALLET_STORE_PATH"] ?? path.join(RAPHAEL_DATA_DIR, "wallets.json")
+// Wallet store path — default inside RAPHAEL_DATA_DIR
+export const WALLET_STORE_PATH = optional(
+  "WALLET_STORE_PATH",
+  path.join(RAPHAEL_DATA_DIR, "wallets.json"),
+)
 
 // pump.fun WebSocket — public, no key needed
 export const PUMPPORTAL_WS = optional(
