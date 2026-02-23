@@ -9,9 +9,9 @@ import type {
 import { runWeatherArbTick } from "./weatherArb.ts";
 
 // Shared file for Inter-Process Communication (IPC)
-// const STATUS_FILE = path.join(os.homedir(), ".solana-agent-status.json");
+const STATUS_FILE = path.join(os.homedir(), ".solana-agent-status.json");
 
-const STATUS_FILE = "/root/raphael-solana/.solana-agent-status.json";
+// const STATUS_FILE = "/root/raphael-solana/.solana-agent-status.json";
 
 export const createStrategyManager = () => {
   let weatherArbIntervalId: NodeJS.Timeout | null = null;

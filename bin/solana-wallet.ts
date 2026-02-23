@@ -1,5 +1,8 @@
 #!/usr/bin/env tsx
 import "dotenv/config";
+import fs from "fs";
+import path from "path";
+import os from "os";
 import { spawn } from "child_process";
 import { fileURLToPath } from "url";
 import { createWallet, listWallets } from "../src/wallet.ts";
@@ -64,7 +67,7 @@ const run = async () => {
         console.log(`  City:       ${s.weather_arb.city ?? "OKX"}`);
         console.log(`  Current:    ${s.weather_arb.lastNoaaTemp ?? "?"}°F`);
         console.log(
-          `  Odds:       ${s.weather_arb.lastMarketOdds ? Math.round(s.weather_arb.lastMarketOdds * 100) + "%" : "?"}`,
+          `  Odds:       ${s.weather_arb.lastMarketOdds != null ? Math.round(s.weather_arb.lastMarketOdds * 100) + "%" : "?"}`,
         );
       }
       return;
@@ -72,6 +75,7 @@ const run = async () => {
 
     if (sub === "stop") {
       spawn("pkill", ["-f", "__daemon_weather"]);
+      try { fs.unlinkSync(path.join(os.homedir(), ".solana-agent-status.json")); } catch {}
       console.log(`Stopping weather-arb scanner...`);
       return;
     }
