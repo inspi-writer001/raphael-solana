@@ -224,4 +224,6 @@ export type StrategyStatus = {
     lastCheckAt: string | null
     city: string | null           // human label derived from gridpointOffice
   }
+  _source?: "live" | "file" | "default"
+  _stale?: boolean
 }

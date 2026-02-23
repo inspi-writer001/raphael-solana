@@ -2,7 +2,6 @@
 import "dotenv/config";
 import fs from "fs";
 import path from "path";
-import os from "os";
 import { spawn } from "child_process";
 import { fileURLToPath } from "url";
 import { createWallet, listWallets } from "../src/wallet.ts";
@@ -10,9 +9,10 @@ import { getPortfolioSummary } from "../src/balance.ts";
 import { transferSOL, transferSPL } from "../src/transfer.ts";
 import { jupiterSwap, solToLamports, SOL_MINT } from "../src/swap.ts";
 import { findHighPotentialPairs } from "../src/screener.ts";
-import { strategyManager } from "../src/strategyManager.ts";
+import { strategyManager, ensureDataDir, STATUS_FILE, PID_FILE } from "../src/strategyManager.ts";
+import { RAPHAEL_DATA_DIR } from "../src/environment.ts";
 
-// ESM equivalent of __filename to fix the crash
+// ESM equivalent of __filename
 const __filename = fileURLToPath(import.meta.url);
 
 const args = process.argv.slice(2);
@@ -26,19 +26,36 @@ const opt = (name: string): string | undefined => {
   return i !== -1 ? args[i + 1] : undefined;
 };
 
+// ── Daemon helpers ───────────────────────────────────────────────────────────
+
+/** Prefer project-local tsx binary; fall back to PATH */
+const findTsx = (): string => {
+  const local = path.join(path.dirname(__filename), "..", "node_modules", ".bin", "tsx");
+  return fs.existsSync(local) ? local : "tsx";
+};
+
+/** Read PID from the PID file, returns null if missing/invalid */
+const readDaemonPid = (): number | null => {
+  try {
+    const data = JSON.parse(fs.readFileSync(PID_FILE, "utf-8")) as { pid?: unknown };
+    return typeof data.pid === "number" ? data.pid : null;
+  } catch {
+    return null;
+  }
+};
+
+// ── Main ─────────────────────────────────────────────────────────────────────
+
 const run = async () => {
   if (!cmd || cmd === "help" || cmd === "--help") {
     console.log("Usage: solana-wallet <command> [options]");
     return;
   }
 
-  // --- Wallet/Balance/Transfer (Original Logic) ---
+  // --- Wallet/Balance/Transfer ---
   if (cmd === "wallet") {
     if (sub === "create") {
-      const r = await createWallet(
-        args[2],
-        (opt("network") ?? "devnet") as any,
-      );
+      const r = await createWallet(args[2], (opt("network") ?? "devnet") as any);
       console.log(JSON.stringify(r));
       return;
     }
@@ -57,9 +74,16 @@ const run = async () => {
 
   // --- Scanner Management ---
   if (cmd === "scanner") {
+    // ── status ──────────────────────────────────────────────────────────────
     if (sub === "status") {
       const s = strategyManager.getStatus();
+      const logPath = path.join(RAPHAEL_DATA_DIR, "weather-arb.log");
+
       console.log(`\n── Status Check ────────────────────────`);
+      if (s._source) {
+        const staleTag = s._stale ? " ⚠ stale" : "";
+        console.log(`  Source:     ${s._source}${staleTag}`);
+      }
       console.log(
         `Weather Arb: ${s.weather_arb.running ? "✅ RUNNING" : "❌ STOPPED"}`,
       );
@@ -69,53 +93,101 @@ const run = async () => {
         console.log(
           `  Odds:       ${s.weather_arb.lastMarketOdds != null ? Math.round(s.weather_arb.lastMarketOdds * 100) + "%" : "?"}`,
         );
+        if (
+          s.weather_arb.lastConfidence != null &&
+          s.weather_arb.lastMarketOdds != null
+        ) {
+          const edge = s.weather_arb.lastConfidence - s.weather_arb.lastMarketOdds;
+          console.log(`  Edge:       ${Math.round(edge * 100)}%`);
+        }
+      }
+      if (fs.existsSync(logPath)) {
+        console.log(`  Log:        ${logPath}`);
       }
       return;
     }
 
+    // ── stop ─────────────────────────────────────────────────────────────────
     if (sub === "stop") {
-      spawn("pkill", ["-f", "__daemon_weather"]);
-      try { fs.unlinkSync(path.join(os.homedir(), ".solana-agent-status.json")); } catch {}
+      const existingPid = readDaemonPid();
+      if (existingPid !== null) {
+        try { process.kill(existingPid, "SIGTERM"); } catch {}
+      } else {
+        spawn("pkill", ["-f", "__daemon_weather"]);
+      }
+      // Remove stale IPC files
+      try { fs.unlinkSync(STATUS_FILE); } catch {}
+      try { fs.unlinkSync(PID_FILE); } catch {}
       console.log(`Stopping weather-arb scanner...`);
       return;
     }
 
+    // ── start weather-arb ────────────────────────────────────────────────────
     if (sub === "start" && args[2] === "weather-arb") {
-      // THE FIX: Use tsx directly on this file via the ESM-safe __filename
+      // Kill any existing daemon
+      const existingPid = readDaemonPid();
+      if (existingPid !== null) {
+        try {
+          process.kill(existingPid, "SIGTERM");
+          await new Promise((r) => setTimeout(r, 500));
+        } catch {}
+      }
+
+      // Prepare log file
+      ensureDataDir();
+      const logPath = path.join(RAPHAEL_DATA_DIR, "weather-arb.log");
+      const logFd = fs.openSync(logPath, "a");
+
       const child = spawn(
-        "tsx",
+        findTsx(),
         [__filename, "__daemon_weather", ...args.slice(3)],
         {
           detached: true,
-          stdio: "ignore",
+          stdio: ["ignore", logFd, logFd],
+          env: { ...process.env, RAPHAEL_DATA_DIR },
         },
       );
+      fs.closeSync(logFd);
       child.unref();
-      console.log(
-        `✅ Weather Arb scanner started in background for ${args[3]}.`,
-      );
+
+      console.log(`✅ Weather Arb scanner started in background for ${args[3]}.`);
+      console.log(`   Log: ${logPath}`);
       process.exit(0);
     }
   }
 
-  // --- The Hidden Background Loop ---
+  // --- Hidden Background Daemon Loop ---
   if (cmd === "__daemon_weather") {
-    // Ensure we are using the correct param names for strategyManager
+    const walletName = sub;
+    const office = opt("office");
+    const gridX = opt("grid-x");
+    const gridY = opt("grid-y");
+    const threshold = opt("threshold");
+    const series = opt("series");
+    const amount = opt("amount");
+
+    if (!walletName || !office || !gridX || !gridY || !threshold || !series || !amount) {
+      console.error(
+        "Error: __daemon_weather requires: <wallet> --office --grid-x --grid-y --threshold --series --amount",
+      );
+      process.exit(1);
+    }
+
     strategyManager.startWeatherArb({
-      walletName: sub,
-      gridpointOffice: opt("office")!,
-      gridX: parseInt(opt("grid-x")!),
-      gridY: parseInt(opt("grid-y")!),
-      tempThresholdF: parseFloat(opt("threshold")!),
-      kalshiSeriesTicker: opt("series")!,
-      tradeAmountUsdc: parseFloat(opt("amount")!),
-      minConfidence: 0.9,
-      maxMarketOdds: 0.4,
+      walletName,
+      gridpointOffice: office,
+      gridX: parseInt(gridX),
+      gridY: parseInt(gridY),
+      tempThresholdF: parseFloat(threshold),
+      kalshiSeriesTicker: series,
+      tradeAmountUsdc: parseFloat(amount),
+      minConfidence: parseFloat(opt("min-confidence") ?? "0.9"),
+      maxMarketOdds: parseFloat(opt("max-market-odds") ?? "0.4"),
       intervalSeconds: parseInt(opt("interval") ?? "120"),
       dryRun: flag("dry-run"),
     });
 
-    // This keeps the process alive forever
+    // Keep process alive — signal handlers in startWeatherArb handle shutdown
     await new Promise(() => {});
   }
 };

@@ -1,5 +1,7 @@
 // Typed env loader — validated at access time, not import time
 // so commands that don't touch keys (e.g. find-pairs) don't fail on missing vars
+import os from "os"
+import path from "path"
 
 const require = (key: string): string => {
   const val = process.env[key]
@@ -21,11 +23,13 @@ export const SOLANA_RPC_URL = optional(
   "https://api.devnet.solana.com"
 )
 
+// Data directory — single source of truth for all IPC / state files
+export const RAPHAEL_DATA_DIR =
+  process.env["RAPHAEL_DATA_DIR"] ?? path.join(os.homedir(), ".raphael")
+
 // Wallet store path
-export const WALLET_STORE_PATH = optional(
-  "WALLET_STORE_PATH",
-  `${process.env.HOME ?? "~"}/.solana-agent-wallets.json`
-)
+export const WALLET_STORE_PATH =
+  process.env["WALLET_STORE_PATH"] ?? path.join(RAPHAEL_DATA_DIR, "wallets.json")
 
 // pump.fun WebSocket — public, no key needed
 export const PUMPPORTAL_WS = optional(

@@ -41,11 +41,24 @@ export default function register(api: OpenClawAPI): void {
           },
           kalshi_series_ticker: {
             type: "string",
-            description: "Kalshi series ticker for the city weather market, e.g. KXHIGHNY (NYC high), KXHIGHCHI (Chicago high), KXHIGHLA (LA high)",
+            description:
+              "Kalshi series ticker for the city weather market, e.g. KXHIGHNY (NYC high), KXHIGHCHI (Chicago high), KXHIGHLA (LA high)",
           },
           trade_amount: {
             type: "number",
             description: "USDC to spend per trade (e.g. 10)",
+          },
+          min_confidence: {
+            type: "number",
+            description: "Minimum NOAA confidence to trigger a trade (default 0.90)",
+          },
+          max_market_odds: {
+            type: "number",
+            description: "Maximum Kalshi market odds to buy at (default 0.40)",
+          },
+          interval_seconds: {
+            type: "number",
+            description: "Poll interval in seconds (default 120)",
           },
           dry_run: { type: "boolean", default: true },
         },
@@ -58,28 +71,75 @@ export default function register(api: OpenClawAPI): void {
         ],
       },
       execute: async (_id, params) => {
-        const p = params as {
-          wallet_name: string
-          target_city_coordinates: { office: string; grid_x: number; grid_y: number }
-          temp_threshold_f: number
-          kalshi_series_ticker: string
-          trade_amount: number
-          dry_run?: boolean
+        try {
+          const p = params as {
+            wallet_name: string
+            target_city_coordinates: { office: string; grid_x: number; grid_y: number }
+            temp_threshold_f: number
+            kalshi_series_ticker: string
+            trade_amount: number
+            min_confidence?: number
+            max_market_odds?: number
+            interval_seconds?: number
+            dry_run?: boolean
+          }
+
+          if (strategyManager.getStatus().weather_arb.running) {
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: "Weather arb scanner is already running. Use stop_weather_arb first.",
+                },
+              ],
+            }
+          }
+
+          const config = {
+            walletName: p.wallet_name,
+            gridpointOffice: p.target_city_coordinates.office,
+            gridX: p.target_city_coordinates.grid_x,
+            gridY: p.target_city_coordinates.grid_y,
+            tempThresholdF: p.temp_threshold_f,
+            kalshiSeriesTicker: p.kalshi_series_ticker,
+            tradeAmountUsdc: p.trade_amount,
+            minConfidence: p.min_confidence ?? 0.90,
+            maxMarketOdds: p.max_market_odds ?? 0.40,
+            intervalSeconds: p.interval_seconds ?? 120,
+            dryRun: p.dry_run ?? true,
+          }
+
+          strategyManager.startWeatherArb(config)
+
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: [
+                  "Weather arb scanner started.",
+                  `  Wallet:       ${config.walletName}`,
+                  `  Office:       ${config.gridpointOffice} (${config.gridX},${config.gridY})`,
+                  `  Threshold:    ${config.tempThresholdF}°F`,
+                  `  Series:       ${config.kalshiSeriesTicker}`,
+                  `  Amount:       ${config.tradeAmountUsdc} USDC`,
+                  `  Min conf:     ${Math.round(config.minConfidence * 100)}%`,
+                  `  Max odds:     ${Math.round(config.maxMarketOdds * 100)}%`,
+                  `  Interval:     ${config.intervalSeconds}s`,
+                  `  Dry run:      ${config.dryRun}`,
+                ].join("\n"),
+              },
+            ],
+          }
+        } catch (err) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Error starting weather arb: ${err instanceof Error ? err.message : String(err)}`,
+              },
+            ],
+          }
         }
-        strategyManager.startWeatherArb({
-          walletName: p.wallet_name,
-          gridpointOffice: p.target_city_coordinates.office,
-          gridX: p.target_city_coordinates.grid_x,
-          gridY: p.target_city_coordinates.grid_y,
-          tempThresholdF: p.temp_threshold_f,
-          kalshiSeriesTicker: p.kalshi_series_ticker,
-          tradeAmountUsdc: p.trade_amount,
-          minConfidence: 0.90,
-          maxMarketOdds: 0.40,
-          intervalSeconds: 120,
-          dryRun: p.dry_run ?? true,
-        })
-        return { content: [{ type: "text" as const, text: "Weather arb scanner started." }] }
       },
     },
     { optional: true },
@@ -89,11 +149,22 @@ export default function register(api: OpenClawAPI): void {
   api.registerTool(
     {
       name: "stop_weather_arb",
-      description: "Stop the Polymarket weather arbitrage scanner.",
+      description: "Stop the Kalshi weather arbitrage scanner.",
       parameters: { type: "object", properties: {} },
       execute: async () => {
-        strategyManager.stopWeatherArb()
-        return { content: [{ type: "text" as const, text: "Weather arb scanner stopped." }] }
+        try {
+          strategyManager.stopWeatherArb()
+          return { content: [{ type: "text" as const, text: "Weather arb scanner stopped." }] }
+        } catch (err) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Error stopping weather arb: ${err instanceof Error ? err.message : String(err)}`,
+              },
+            ],
+          }
+        }
       },
     },
     { optional: true },
@@ -108,6 +179,17 @@ export default function register(api: OpenClawAPI): void {
       parameters: { type: "object", properties: {} },
       execute: async () => {
         const s = strategyManager.getStatus()
+
+        const sourceLine =
+          s._source
+            ? `  Source:           ${s._source}${s._stale ? " ⚠ stale" : ""}`
+            : null
+
+        const edgeLine =
+          s.weather_arb.lastConfidence != null && s.weather_arb.lastMarketOdds != null
+            ? `  Edge:             ${Math.round((s.weather_arb.lastConfidence - s.weather_arb.lastMarketOdds) * 100)}% (conf − odds)`
+            : null
+
         const lines = [
           `── Pumpfun Scanner ─────────────────────`,
           `  Running:          ${s.pumpfun.running}`,
@@ -115,11 +197,13 @@ export default function register(api: OpenClawAPI): void {
           `  Last check:       ${s.pumpfun.lastCheckAt ?? "never"}`,
           ``,
           `── Weather Arb Scanner ──────────────────`,
+          ...(sourceLine ? [sourceLine] : []),
           `  Running:          ${s.weather_arb.running}`,
           `  City (office):    ${s.weather_arb.city ?? "not configured"}`,
           `  NOAA forecast:    ${s.weather_arb.lastNoaaTemp != null ? `${s.weather_arb.lastNoaaTemp}°F` : "pending"}`,
           `  Confidence:       ${s.weather_arb.lastConfidence != null ? `${Math.round(s.weather_arb.lastConfidence * 100)}%` : "pending"}`,
           `  Market odds:      ${s.weather_arb.lastMarketOdds != null ? `${Math.round(s.weather_arb.lastMarketOdds * 100)}%` : "pending"}`,
+          ...(edgeLine ? [edgeLine] : []),
           `  Last check:       ${s.weather_arb.lastCheckAt ?? "never"}`,
         ]
         return { content: [{ type: "text" as const, text: lines.join("\n") }] }
