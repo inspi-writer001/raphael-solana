@@ -80,7 +80,10 @@ Commands:
   // --- Wallet / Balance / Transfer ---
   if (cmd === "wallet") {
     if (sub === "create") {
-      const r = await createWallet(args[2], (opt("network") ?? "devnet") as any);
+      const r = await createWallet(
+        args[2],
+        (opt("network") ?? "devnet") as any,
+      );
       console.log(JSON.stringify(r));
       return;
     }
@@ -93,7 +96,13 @@ Commands:
 
   if (cmd === "balance") {
     const r = await getPortfolioSummary(sub);
-    console.log(JSON.stringify(r));
+    console.log(
+      JSON.stringify(
+        r,
+        (_, v) => (typeof v === "bigint" ? v.toString() : v),
+        2,
+      ),
+    );
     return;
   }
 
@@ -104,7 +113,12 @@ Commands:
       return;
     }
     if (sub === "spl") {
-      const r = await transferSPL(args[2], args[3], args[4], parseFloat(args[5]));
+      const r = await transferSPL(
+        args[2],
+        args[3],
+        args[4],
+        parseFloat(args[5]),
+      );
       console.log(JSON.stringify(r));
       return;
     }
@@ -132,14 +146,22 @@ Commands:
     // ── start weather-arb ────────────────────────────────────────────────────
     if (sub === "start" && args[2] === "weather-arb") {
       const walletName = args[3];
-      const office    = opt("office");
-      const gridX     = opt("grid-x");
-      const gridY     = opt("grid-y");
+      const office = opt("office");
+      const gridX = opt("grid-x");
+      const gridY = opt("grid-y");
       const threshold = opt("threshold");
-      const series    = opt("series");
-      const amount    = opt("amount");
+      const series = opt("series");
+      const amount = opt("amount");
 
-      if (!walletName || !office || !gridX || !gridY || !threshold || !series || !amount) {
+      if (
+        !walletName ||
+        !office ||
+        !gridX ||
+        !gridY ||
+        !threshold ||
+        !series ||
+        !amount
+      ) {
         console.error("Missing required params. Usage:");
         console.error(
           "  scanner start weather-arb <wallet> --office OKX --grid-x 33 --grid-y 35 --threshold 50 --series KXHIGHNY --amount 10 [--dry-run]",
@@ -156,9 +178,11 @@ Commands:
       }
 
       // Prepare log file
-      try { fs.mkdirSync(RAPHAEL_DATA_DIR, { recursive: true }); } catch {}
+      try {
+        fs.mkdirSync(RAPHAEL_DATA_DIR, { recursive: true });
+      } catch {}
       const logPath = path.join(RAPHAEL_DATA_DIR, "weather-arb.log");
-      const logFd   = fs.openSync(logPath, "a");
+      const logFd = fs.openSync(logPath, "a");
 
       const child = spawn(
         process.execPath,
@@ -201,15 +225,21 @@ Commands:
         console.log("No live PID found. Sent pkill -f __daemon_weather.");
       }
       // Remove stale IPC files
-      try { fs.unlinkSync(strategyManager.STATUS_FILE); } catch {}
-      try { fs.unlinkSync(strategyManager.PID_FILE); } catch {}
+      try {
+        fs.unlinkSync(strategyManager.STATUS_FILE);
+      } catch {}
+      try {
+        fs.unlinkSync(strategyManager.PID_FILE);
+      } catch {}
       console.log("Scanner stopped.");
       return;
     }
 
     // ── status (fall through) ─────────────────────────────────────────────
     if (sub !== "status") {
-      console.log("Unknown scanner subcommand. Use: start weather-arb | stop | status");
+      console.log(
+        "Unknown scanner subcommand. Use: start weather-arb | stop | status",
+      );
       return;
     }
   }
@@ -218,7 +248,7 @@ Commands:
   if (cmd === "status" || (cmd === "scanner" && sub === "status")) {
     const s = strategyManager.getStatus();
     const logPath = path.join(RAPHAEL_DATA_DIR, "weather-arb.log");
-    const pid     = readDaemonPid();
+    const pid = readDaemonPid();
 
     console.log(`\n── Status Check ────────────────────────`);
     console.log(
@@ -233,39 +263,55 @@ Commands:
       console.log(
         `  Mkt Odds:   ${s.weather_arb.lastMarketOdds != null ? Math.round(s.weather_arb.lastMarketOdds * 100) + "%" : "?"}`,
       );
-      if (s.weather_arb.lastConfidence != null && s.weather_arb.lastMarketOdds != null) {
-        const edge = s.weather_arb.lastConfidence - s.weather_arb.lastMarketOdds;
+      if (
+        s.weather_arb.lastConfidence != null &&
+        s.weather_arb.lastMarketOdds != null
+      ) {
+        const edge =
+          s.weather_arb.lastConfidence - s.weather_arb.lastMarketOdds;
         console.log(`  Edge:       ${Math.round(edge * 100)}%`);
       }
       console.log(`  Last check: ${s.weather_arb.lastCheckAt ?? "never"}`);
     }
     if (pid !== null) {
-      console.log(`  PID:        ${pid} (${isPidAlive(pid) ? "alive" : "dead"})`);
+      console.log(
+        `  PID:        ${pid} (${isPidAlive(pid) ? "alive" : "dead"})`,
+      );
     }
     if (fs.existsSync(logPath)) {
       console.log(`  Log:        ${logPath}`);
     }
     if (s._source) console.log(`  Source:     ${s._source}`);
-    if (s._stale)  console.log(`  ⚠  Status data is stale (>10 min old)`);
+    if (s._stale) console.log(`  ⚠  Status data is stale (>10 min old)`);
     return;
   }
 
   // --- Hidden Background Daemon Loop ---
   if (cmd === "__daemon_weather") {
     const walletName = sub;
-    const office    = opt("office");
-    const gridX     = opt("grid-x");
-    const gridY     = opt("grid-y");
+    const office = opt("office");
+    const gridX = opt("grid-x");
+    const gridY = opt("grid-y");
     const threshold = opt("threshold");
-    const series    = opt("series");
-    const amount    = opt("amount");
+    const series = opt("series");
+    const amount = opt("amount");
 
-    if (!walletName || !office || !gridX || !gridY || !threshold || !series || !amount) {
+    if (
+      !walletName ||
+      !office ||
+      !gridX ||
+      !gridY ||
+      !threshold ||
+      !series ||
+      !amount
+    ) {
       console.error("[daemon] Missing required parameters. Exiting.");
       process.exit(1);
     }
 
-    console.log(`[daemon] Starting weather arb scanner at ${new Date().toISOString()}`);
+    console.log(
+      `[daemon] Starting weather arb scanner at ${new Date().toISOString()}`,
+    );
     console.log(
       `[daemon] Config: wallet=${walletName} office=${office} grid=${gridX},${gridY} threshold=${threshold}°F series=${series} amount=${amount} dry-run=${flag("dry-run")}`,
     );
