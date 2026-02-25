@@ -1,5 +1,5 @@
 import { Connection, VersionedTransaction, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js"
-import { getMint } from "@solana/spl-token"
+import { getMint, getAssociatedTokenAddressSync } from "@solana/spl-token"
 import { explorerTx } from "./environment.ts"
 import { loadKeypair } from "./wallet.ts"
 import type { SwapResult } from "./types.ts"
@@ -139,6 +139,12 @@ export const raydiumSwap = async (
     }
   } catch (e) {}
 
+  // For token inputs (non-SOL), Raydium requires the ATA address explicitly.
+  // Without it, their server-side account derivation fails with REQ_INPUT_ACCOUT_ERROR.
+  const inputAccount = inputMint !== SOL_MINT
+    ? getAssociatedTokenAddressSync(new PublicKey(inputMint), keypair.publicKey).toBase58()
+    : undefined
+
   console.log(`[RAYDIUM] Building transaction...`)
   const swapRes = await fetch(`${RAYDIUM_SWAP_HOST}/transaction/swap-base-in`, {
     method: "POST",
@@ -150,6 +156,7 @@ export const raydiumSwap = async (
       wallet: keypair.publicKey.toBase58(),
       wrapSol: inputMint === SOL_MINT,
       unwrapSol: outputMint === SOL_MINT,
+      ...(inputAccount ? { inputAccount } : {}),
     }),
   })
 
