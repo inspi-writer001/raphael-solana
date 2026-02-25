@@ -17,6 +17,115 @@ type OpenClawAPI = {
 }
 
 export default function register(api: OpenClawAPI): void {
+  // ── create_evm_wallet ──────────────────────────────────────────────────────
+  api.registerTool(
+    {
+      name: "create_evm_wallet",
+      description:
+        "Create a new EVM (Polygon/secp256k1) wallet for Polymarket trading. Returns the wallet name and Polygon address. The user must bridge USDC to this address before live trading.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Wallet name, e.g. \"polymarket1\"" },
+        },
+        required: ["name"],
+      },
+      execute: async (_id, params) => {
+        try {
+          const { name } = params as { name: string }
+          const info = await createEvmWallet(name)
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: [
+                  `EVM wallet "${info.name}" created.`,
+                  `  Polygon address: ${info.address}`,
+                  `  Created at:      ${info.createdAt}`,
+                  ``,
+                  `Send USDC (Polygon PoS) to: ${info.address}`,
+                  `Then call check_usdc_balance to verify arrival before starting the scanner.`,
+                ].join("\n"),
+              },
+            ],
+          }
+        } catch (err) {
+          return {
+            content: [{ type: "text" as const, text: `Error creating EVM wallet: ${err instanceof Error ? err.message : String(err)}` }],
+          }
+        }
+      },
+    },
+    { optional: true },
+  )
+
+  // ── list_evm_wallets ───────────────────────────────────────────────────────
+  api.registerTool(
+    {
+      name: "list_evm_wallets",
+      description: "List all EVM (Polygon) wallets. Shows names and Polygon addresses.",
+      parameters: { type: "object", properties: {} },
+      execute: async () => {
+        try {
+          const wallets = await listEvmWallets()
+          if (wallets.length === 0) {
+            return { content: [{ type: "text" as const, text: "No EVM wallets found. Use create_evm_wallet to create one." }] }
+          }
+          const lines = wallets.map(w => `  ${w.name.padEnd(16)}: ${w.address}  (created ${w.createdAt})`)
+          return { content: [{ type: "text" as const, text: `EVM wallets:\n${lines.join("\n")}` }] }
+        } catch (err) {
+          return {
+            content: [{ type: "text" as const, text: `Error listing EVM wallets: ${err instanceof Error ? err.message : String(err)}` }],
+          }
+        }
+      },
+    },
+    { optional: true },
+  )
+
+  // ── check_usdc_balance ─────────────────────────────────────────────────────
+  api.registerTool(
+    {
+      name: "check_usdc_balance",
+      description:
+        "Check the USDC.e balance on Polygon for a named EVM wallet. Use this to confirm funds have arrived before starting the live scanner.",
+      parameters: {
+        type: "object",
+        properties: {
+          wallet_name: { type: "string", description: "EVM wallet name" },
+        },
+        required: ["wallet_name"],
+      },
+      execute: async (_id, params) => {
+        try {
+          const { wallet_name } = params as { wallet_name: string }
+          const address = await getEvmAddress(wallet_name)
+          const balance = await getUsdcBalance(address)
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: [
+                  `USDC balance for "${wallet_name}":`,
+                  `  Address: ${address}`,
+                  `  Balance: $${balance.toFixed(2)} USDC`,
+                  balance < 5
+                    ? `  ⚠ Balance is below the $5 minimum trade amount.`
+                    : `  ✅ Ready to trade.`,
+                ].join("\n"),
+              },
+            ],
+          }
+        } catch (err) {
+          return {
+            content: [{ type: "text" as const, text: `Error checking USDC balance: ${err instanceof Error ? err.message : String(err)}` }],
+          }
+        }
+      },
+    },
+    { optional: true },
+  )
+
   // ── start_weather_arb ──────────────────────────────────────────────────────
   api.registerTool(
     {
