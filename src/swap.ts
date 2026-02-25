@@ -1,20 +1,19 @@
 import { Connection, VersionedTransaction, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js"
 import { getMint } from "@solana/spl-token"
-import { SOLANA_RPC_URL, explorerTx } from "./environment.ts"
+import { explorerTx } from "./environment.ts"
 import { loadKeypair } from "./wallet.ts"
 import type { SwapResult } from "./types.ts"
 
 const RAYDIUM_SWAP_HOST = "https://transaction-v1.raydium.io"
 
 export const SOL_MINT  = "So11111111111111111111111111111111111111112"
-// Orca devnet USDC — useful for devnet swap tests
 export const USDC_DEVNET_MINT = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
 
 export const solToLamports = (sol: number): number => Math.floor(sol * LAMPORTS_PER_SOL)
 
 interface RaydiumSwapCompute {
   success: boolean
-  data: {
+  data?: {
     inputMint: string
     inputAmount: string
     outputMint: string
@@ -44,6 +43,73 @@ export const raydiumQuote = async (
   return res.json() as Promise<RaydiumSwapCompute>
 }
 
+async function sendRawTx(rpcUrl: string, txBase64: string): Promise<string> {
+  console.log(`[RPC] Sending transaction...`)
+  
+  const payload = {
+    jsonrpc: "2.0",
+    id: Date.now(),
+    method: "sendTransaction",
+    params: [txBase64, { skipPreflight: true }]
+  }
+
+  const res = await fetch(rpcUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  })
+
+  const responseText = await res.text()
+  const data = JSON.parse(responseText) as { result?: string; error?: { message: string; code?: number } }
+  
+  if (data.error) {
+    throw new Error(`RPC error: ${data.error.message}`)
+  }
+  
+  if (!data.result) {
+    throw new Error(`No signature`)
+  }
+
+  return data.result
+}
+
+async function confirmTx(rpcUrl: string, signature: string, timeout = 30000): Promise<void> {
+  const startTime = Date.now()
+  let attempts = 0
+  
+  while (Date.now() - startTime < timeout) {
+    try {
+      const res = await fetch(rpcUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "getSignatureStatus",
+          params: [signature],
+        }),
+      })
+
+      const data = await res.json() as { result?: { value?: { confirmationStatus?: string } } }
+      const status = data.result?.value?.confirmationStatus
+      
+      if (status === "confirmed" || status === "finalized") {
+        console.log(`[RPC] ✅ Confirmed`)
+        return
+      }
+      
+      attempts++
+      if (attempts % 5 === 0) {
+        console.log(`[RPC] Waiting... (status: ${status || "pending"})`)
+      }
+    } catch (e) {}
+    
+    await new Promise(r => setTimeout(r, 1000))
+  }
+
+  throw new Error(`Timeout`)
+}
+
 export const raydiumSwap = async (
   walletName: string,
   inputMint: string,
@@ -52,25 +118,33 @@ export const raydiumSwap = async (
   slippageBps = 300,
   rpcUrl?: string
 ): Promise<SwapResult> => {
-  const rpc = rpcUrl ?? SOLANA_RPC_URL
+  const rpc = rpcUrl || process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com"
   const connection = new Connection(rpc, "confirmed")
   const keypair = await loadKeypair(walletName)
 
+  console.log(`[RAYDIUM] Getting quote...`)
   const quoteResponse = await raydiumQuote(inputMint, outputMint, amountLamports, slippageBps)
   if (!quoteResponse.success) {
-    throw new Error(`Raydium quote unsuccessful: ${JSON.stringify(quoteResponse)}`)
+    throw new Error(`Quote failed`)
   }
 
-  const feeRes = await fetch(`${RAYDIUM_SWAP_HOST}/priority-fee`)
-  if (!feeRes.ok) throw new Error(`Raydium priority-fee failed (${feeRes.status}): ${await feeRes.text()}`)
-  const feeData = await feeRes.json() as { data: { default: { h: number } } }
-  const computeUnitPriceMicroLamports = String(feeData.data.default.h)
+  console.log(`[RAYDIUM] Output: ${quoteResponse.data?.outputAmount}`)
 
+  let computeUnitPrice = "1000000"
+  try {
+    const feeRes = await fetch(`${RAYDIUM_SWAP_HOST}/priority-fee`)
+    if (feeRes.ok) {
+      const feeData = await feeRes.json() as { data: { default: { h: number } } }
+      computeUnitPrice = String(feeData.data.default.h)
+    }
+  } catch (e) {}
+
+  console.log(`[RAYDIUM] Building transaction...`)
   const swapRes = await fetch(`${RAYDIUM_SWAP_HOST}/transaction/swap-base-in`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      computeUnitPriceMicroLamports,
+      computeUnitPriceMicroLamports: computeUnitPrice,
       swapResponse: quoteResponse,
       txVersion: "V0",
       wallet: keypair.publicKey.toBase58(),
@@ -79,22 +153,21 @@ export const raydiumSwap = async (
     }),
   })
 
-  if (!swapRes.ok) throw new Error(`Raydium swap failed (${swapRes.status}): ${await swapRes.text()}`)
+  if (!swapRes.ok) throw new Error(`TX build failed`)
+  const swapData = await swapRes.json() as { data?: Array<{ transaction: string }> }
+  
+  if (!swapData.data?.length) throw new Error(`No TX`)
 
-  const { data: txData } = await swapRes.json() as { data: [{ transaction: string }] }
-  const txBuf = Buffer.from(txData[0].transaction, "base64")
-  const transaction = VersionedTransaction.deserialize(txBuf)
-  transaction.sign([keypair])
-
-  const signature = await connection.sendRawTransaction(transaction.serialize(), {
-    skipPreflight: true,
-    maxRetries: 2,
-  })
-
-  await connection.confirmTransaction(signature, "confirmed")
+  // Use transaction EXACTLY as Raydium returns it, no deserialization/re-signing
+  const txBase64 = swapData.data[0].transaction
+  
+  const signature = await sendRawTx(rpc, txBase64)
+  console.log(`[RPC] TX: ${signature}`)
+  
+  await confirmTx(rpc, signature)
 
   const mintInfo = await getMint(connection, new PublicKey(outputMint))
-  const outputAmount = parseInt(quoteResponse.data.outputAmount) / 10 ** mintInfo.decimals
+  const outputAmount = parseInt(quoteResponse.data?.outputAmount || "0") / 10 ** mintInfo.decimals
   const inputAmountSol = amountLamports / LAMPORTS_PER_SOL
 
   return {
