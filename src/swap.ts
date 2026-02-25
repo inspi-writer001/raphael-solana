@@ -45,12 +45,12 @@ export const raydiumQuote = async (
 
 async function sendRawTx(rpcUrl: string, txBase64: string): Promise<string> {
   console.log(`[RPC] Sending transaction...`)
-  
+
   const payload = {
     jsonrpc: "2.0",
     id: Date.now(),
     method: "sendTransaction",
-    params: [txBase64, { skipPreflight: true }]
+    params: [txBase64, { encoding: "base64", skipPreflight: true }]
   }
 
   const res = await fetch(rpcUrl, {
@@ -85,13 +85,13 @@ async function confirmTx(rpcUrl: string, signature: string, timeout = 30000): Pr
         body: JSON.stringify({
           jsonrpc: "2.0",
           id: 1,
-          method: "getSignatureStatus",
-          params: [signature],
+          method: "getSignatureStatuses",
+          params: [[signature]],
         }),
       })
 
-      const data = await res.json() as { result?: { value?: { confirmationStatus?: string } } }
-      const status = data.result?.value?.confirmationStatus
+      const data = await res.json() as { result?: { value?: Array<{ confirmationStatus?: string } | null> } }
+      const status = data.result?.value?.[0]?.confirmationStatus
       
       if (status === "confirmed" || status === "finalized") {
         console.log(`[RPC] ✅ Confirmed`)
@@ -158,10 +158,12 @@ export const raydiumSwap = async (
   
   if (!swapData.data?.length) throw new Error(`No TX`)
 
-  // Use transaction EXACTLY as Raydium returns it, no deserialization/re-signing
-  const txBase64 = swapData.data[0].transaction
-  
-  const signature = await sendRawTx(rpc, txBase64)
+  const txBuf = Buffer.from(swapData.data[0].transaction, "base64")
+  const transaction = VersionedTransaction.deserialize(txBuf)
+  transaction.sign([keypair])
+  const signedBase64 = Buffer.from(transaction.serialize()).toString("base64")
+
+  const signature = await sendRawTx(rpc, signedBase64)
   console.log(`[RPC] TX: ${signature}`)
   
   await confirmTx(rpc, signature)
