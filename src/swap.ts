@@ -153,10 +153,11 @@ export const raydiumSwap = async (
     }),
   })
 
-  if (!swapRes.ok) throw new Error(`TX build failed`)
-  const swapData = await swapRes.json() as { data?: Array<{ transaction: string }> }
-  
-  if (!swapData.data?.length) throw new Error(`No TX`)
+  if (!swapRes.ok) throw new Error(`Raydium tx build failed (${swapRes.status}): ${await swapRes.text()}`)
+  const swapData = await swapRes.json() as { success?: boolean; msg?: string; data?: Array<{ transaction: string }> }
+
+  if (!swapData.success) throw new Error(`Raydium tx build failed: ${swapData.msg ?? "unknown error"}`)
+  if (!swapData.data?.length) throw new Error(`Raydium tx build returned no transactions`)
 
   const txBuf = Buffer.from(swapData.data[0].transaction, "base64")
   const transaction = VersionedTransaction.deserialize(txBuf)
