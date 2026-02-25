@@ -8,7 +8,7 @@ import { fileURLToPath } from "url";
 import { createWallet, listWallets } from "../src/wallet.ts";
 import { getPortfolioSummary } from "../src/balance.ts";
 import { transferSOL, transferSPL } from "../src/transfer.ts";
-import { jupiterSwap, solToLamports, SOL_MINT } from "../src/swap.ts";
+import { raydiumSwap, solToLamports, SOL_MINT } from "../src/swap.ts";
 import { findHighPotentialPairs } from "../src/screener.ts";
 import { strategyManager } from "../src/strategyManager.ts";
 
@@ -125,7 +125,7 @@ Commands:
   }
 
   if (cmd === "swap") {
-    const r = await jupiterSwap(
+    const r = await raydiumSwap(
       sub,
       SOL_MINT,
       args[3],

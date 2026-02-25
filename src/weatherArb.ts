@@ -1,4 +1,4 @@
-import { jupiterSwap } from "./swap.ts"
+import { raydiumSwap } from "./swap.ts"
 import type { WeatherArbConfig, WeatherArbReading, NoaaForecast } from "./types.ts"
 
 export const USDC_MAINNET_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
@@ -206,7 +206,7 @@ export const runWeatherArbTick = async (
       `Edge: ${reading.hasEdge ? "YES" : "no"}`,
     )
     if (reading.hasEdge && !config.dryRun && reading.resolvedYesMint) {
-      await jupiterSwap(
+      await raydiumSwap(
         config.walletName,
         USDC_MAINNET_MINT,
         reading.resolvedYesMint,

@@ -1,7 +1,7 @@
 import { startPumpListener, getBufferStats } from "./screener.ts"
 import { getPortfolioSummary } from "./balance.ts"
 import { threeXStrategy } from "./strategy.ts"
-import { jupiterSwap, solToLamports, SOL_MINT } from "./swap.ts"
+import { raydiumSwap, solToLamports, SOL_MINT } from "./swap.ts"
 import type { AgentConfig, AgentState, ScoredToken, Trade } from "./types.ts"
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
@@ -36,7 +36,7 @@ export const runPumpfunTick = async (
           )
         } else {
           log(`Executing swap: ${decision.suggestedAmountSol} SOL → ${decision.token.symbol}`)
-          const result = await jupiterSwap(
+          const result = await raydiumSwap(
             config.walletName,
             SOL_MINT,
             decision.token.mint,
