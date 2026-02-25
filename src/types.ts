@@ -175,38 +175,28 @@ export type AgentState = {
   lastRunAt: string | null
 }
 
-// ── Weather Arb ──────────────────────────────────────────────────────────────
-export type WeatherArbConfig = {
-  walletName: string
-  gridpointOffice: string   // e.g. "OKX" (New York), "LOT" (Chicago)
-  gridX: number
-  gridY: number
-  tempThresholdF: number    // e.g. 50  — the binary event temperature
-  kalshiSeriesTicker: string  // e.g. "KXHIGHNY", "KXHIGHCHI", "KXHIGHLA"
-  tradeAmountUsdc: number   // USDC to spend per buy (e.g. 10)
-  minConfidence: number     // default 0.90 (fire only when NOAA ≥ this confident)
-  maxMarketOdds: number     // default 0.40 (buy only when market is this or cheaper)
-  intervalSeconds: number   // poll interval, default 120
+// ── Polymarket Weather Arb ────────────────────────────────────────────────────
+
+export type PolymarketWeatherConfig = {
+  walletName: string          // EVM wallet name (secp256k1, Polygon)
+  cities: string[]            // e.g. ["nyc", "london", "seoul"]
+  tradeAmountUsdc: number     // per trade (min $5, default $5)
+  maxPositionUsdc: number     // hard cap per bracket (default $10)
+  minEdge: number             // fairValue − askPrice threshold (default 0.20)
+  minFairValue: number        // minimum fair probability to trade (default 0.40)
+  intervalSeconds: number
   dryRun: boolean
 }
 
-export type NoaaForecast = {
+export type PolymarketWeatherReading = {
+  city: string
   forecastHighF: number
-  periodName: string
-  shortForecast: string
-  isDaytime: boolean
-  fetchedAt: number
-}
-
-export type WeatherArbReading = {
-  noaaForecast: NoaaForecast
-  confidence: number              // 0-1 derived from threshold delta model
-  kalshiImpliedOdds: number       // 0-1 bracket-sum probability from Kalshi
-  edge: number                    // confidence − kalshiImpliedOdds
-  hasEdge: boolean
-  thresholdBracketTicker: string | null  // Kalshi ticker at threshold (for execution)
-  resolvedYesMint: string | null         // SPL mint from DFlow (null if no API key)
-  fetchedAt: number
+  sigmaF: number              // forecast uncertainty used (°F)
+  targetBracket: string | null   // e.g. "40-41°F"
+  bestEdge: number | null
+  orderId: string | null
+  skippedReason: string | null   // "no_market" | "market_closing_soon" | "no_edge" | "already_positioned" | "insufficient_usdc" | "error"
+  scannedAt: number
 }
 
 // ── Strategy Manager ─────────────────────────────────────────────────────────
@@ -218,11 +208,9 @@ export type StrategyStatus = {
   }
   weather_arb: {
     running: boolean
-    lastNoaaTemp: number | null
-    lastMarketOdds: number | null
-    lastConfidence: number | null
     lastCheckAt: string | null
-    city: string | null           // human label derived from gridpointOffice
+    cities: string[]
+    lastReadings: PolymarketWeatherReading[]
   }
   _source?: "live" | "file" | "default" | "dead_daemon_cleanup"
   _stale?: boolean

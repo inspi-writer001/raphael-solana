@@ -1,4 +1,6 @@
 import { strategyManager } from "./strategyManager.ts"
+import { createEvmWallet, listEvmWallets, getEvmAddress } from "./evmWallet.ts"
+import { getUsdcBalance } from "./polymarketClob.ts"
 
 type OpenClawTool = {
   name: string
@@ -20,41 +22,31 @@ export default function register(api: OpenClawAPI): void {
     {
       name: "start_weather_arb",
       description:
-        "Start the Kalshi weather arbitrage scanner. Polls NOAA every 2 min and buys YES tokens via Jupiter when Kalshi bracket-sum probability is below confidence threshold.",
+        "Start the Polymarket weather arbitrage scanner. Polls Open-Meteo forecasts and buys underpriced YES brackets on Polymarket weather markets using an EVM (Polygon) wallet.",
       parameters: {
         type: "object",
         properties: {
-          wallet_name: { type: "string", description: "Managed wallet name" },
-          target_city_coordinates: {
-            type: "object",
-            description: "NOAA grid coordinates",
-            properties: {
-              office: { type: "string", description: "NOAA office code e.g. OKX" },
-              grid_x: { type: "number" },
-              grid_y: { type: "number" },
-            },
-            required: ["office", "grid_x", "grid_y"],
+          wallet_name: { type: "string", description: "EVM wallet name (Polygon/secp256k1)" },
+          cities: {
+            type: "array",
+            items: { type: "string" },
+            description: "City keys to scan, e.g. [\"nyc\",\"london\",\"seoul\"]",
           },
-          temp_threshold_f: {
+          trade_amount_usdc: {
             type: "number",
-            description: "Temperature threshold in Fahrenheit",
+            description: "USDC to spend per trade (min $5, e.g. 5)",
           },
-          kalshi_series_ticker: {
-            type: "string",
-            description:
-              "Kalshi series ticker for the city weather market, e.g. KXHIGHNY (NYC high), KXHIGHCHI (Chicago high), KXHIGHLA (LA high)",
-          },
-          trade_amount: {
+          max_position_usdc: {
             type: "number",
-            description: "USDC to spend per trade (e.g. 10)",
+            description: "Hard cap USDC per bracket (default 10)",
           },
-          min_confidence: {
+          min_edge: {
             type: "number",
-            description: "Minimum NOAA confidence to trigger a trade (default 0.90)",
+            description: "Minimum edge (fairValue − askPrice) to trigger trade (default 0.20)",
           },
-          max_market_odds: {
+          min_fair_value: {
             type: "number",
-            description: "Maximum Kalshi market odds to buy at (default 0.40)",
+            description: "Minimum fair probability to consider trading (default 0.40)",
           },
           interval_seconds: {
             type: "number",
@@ -62,24 +54,17 @@ export default function register(api: OpenClawAPI): void {
           },
           dry_run: { type: "boolean", default: true },
         },
-        required: [
-          "wallet_name",
-          "target_city_coordinates",
-          "temp_threshold_f",
-          "kalshi_series_ticker",
-          "trade_amount",
-        ],
+        required: ["wallet_name", "trade_amount_usdc"],
       },
       execute: async (_id, params) => {
         try {
           const p = params as {
             wallet_name: string
-            target_city_coordinates: { office: string; grid_x: number; grid_y: number }
-            temp_threshold_f: number
-            kalshi_series_ticker: string
-            trade_amount: number
-            min_confidence?: number
-            max_market_odds?: number
+            cities?: string[]
+            trade_amount_usdc: number
+            max_position_usdc?: number
+            min_edge?: number
+            min_fair_value?: number
             interval_seconds?: number
             dry_run?: boolean
           }
@@ -96,17 +81,14 @@ export default function register(api: OpenClawAPI): void {
           }
 
           const config = {
-            walletName: p.wallet_name,
-            gridpointOffice: p.target_city_coordinates.office,
-            gridX: p.target_city_coordinates.grid_x,
-            gridY: p.target_city_coordinates.grid_y,
-            tempThresholdF: p.temp_threshold_f,
-            kalshiSeriesTicker: p.kalshi_series_ticker,
-            tradeAmountUsdc: p.trade_amount,
-            minConfidence: p.min_confidence ?? 0.90,
-            maxMarketOdds: p.max_market_odds ?? 0.40,
-            intervalSeconds: p.interval_seconds ?? 120,
-            dryRun: p.dry_run ?? true,
+            walletName:       p.wallet_name,
+            cities:           p.cities ?? ["nyc","london","seoul","chicago","dallas","miami","paris","toronto","seattle"],
+            tradeAmountUsdc:  p.trade_amount_usdc,
+            maxPositionUsdc:  p.max_position_usdc  ?? 10,
+            minEdge:          p.min_edge            ?? 0.20,
+            minFairValue:     p.min_fair_value      ?? 0.40,
+            intervalSeconds:  p.interval_seconds    ?? 120,
+            dryRun:           p.dry_run             ?? true,
           }
 
           strategyManager.startWeatherArb(config)
@@ -116,14 +98,13 @@ export default function register(api: OpenClawAPI): void {
               {
                 type: "text" as const,
                 text: [
-                  "Weather arb scanner started.",
+                  "Polymarket weather arb scanner started.",
                   `  Wallet:       ${config.walletName}`,
-                  `  Office:       ${config.gridpointOffice} (${config.gridX},${config.gridY})`,
-                  `  Threshold:    ${config.tempThresholdF}°F`,
-                  `  Series:       ${config.kalshiSeriesTicker}`,
-                  `  Amount:       ${config.tradeAmountUsdc} USDC`,
-                  `  Min conf:     ${Math.round(config.minConfidence * 100)}%`,
-                  `  Max odds:     ${Math.round(config.maxMarketOdds * 100)}%`,
+                  `  Cities:       ${config.cities.join(", ")}`,
+                  `  Amount:       $${config.tradeAmountUsdc} USDC`,
+                  `  Max pos:      $${config.maxPositionUsdc} USDC`,
+                  `  Min edge:     ${Math.round(config.minEdge * 100)}%`,
+                  `  Min fair val: ${Math.round(config.minFairValue * 100)}%`,
                   `  Interval:     ${config.intervalSeconds}s`,
                   `  Dry run:      ${config.dryRun}`,
                 ].join("\n"),
@@ -149,7 +130,7 @@ export default function register(api: OpenClawAPI): void {
   api.registerTool(
     {
       name: "stop_weather_arb",
-      description: "Stop the Kalshi weather arbitrage scanner.",
+      description: "Stop the Polymarket weather arbitrage scanner.",
       parameters: { type: "object", properties: {} },
       execute: async () => {
         try {
@@ -175,7 +156,7 @@ export default function register(api: OpenClawAPI): void {
     {
       name: "get_strategy_status",
       description:
-        "Returns formatted status of both the pumpfun and weather_arb scanners including latest readings.",
+        "Returns formatted status of both the pumpfun and Polymarket weather_arb scanners including latest per-city readings.",
       parameters: { type: "object", properties: {} },
       execute: async () => {
         const s = strategyManager.getStatus()
@@ -185,10 +166,12 @@ export default function register(api: OpenClawAPI): void {
             ? `  Source:           ${s._source}${s._stale ? " ⚠ stale" : ""}`
             : null
 
-        const edgeLine =
-          s.weather_arb.lastConfidence != null && s.weather_arb.lastMarketOdds != null
-            ? `  Edge:             ${Math.round((s.weather_arb.lastConfidence - s.weather_arb.lastMarketOdds) * 100)}% (conf − odds)`
-            : null
+        const cityLines = s.weather_arb.lastReadings.map((r) => {
+          const edgeStr   = r.bestEdge   != null ? ` edge=${Math.round(r.bestEdge * 100)}%` : ""
+          const bracketStr = r.targetBracket ? ` bracket="${r.targetBracket}"` : ""
+          const skipStr   = r.skippedReason ? ` (${r.skippedReason})` : ""
+          return `    ${r.city.padEnd(8)}: ${r.forecastHighF}°F${bracketStr}${edgeStr}${skipStr}`
+        })
 
         const lines = [
           `── Pumpfun Scanner ─────────────────────`,
@@ -199,12 +182,9 @@ export default function register(api: OpenClawAPI): void {
           `── Weather Arb Scanner ──────────────────`,
           ...(sourceLine ? [sourceLine] : []),
           `  Running:          ${s.weather_arb.running}`,
-          `  City (office):    ${s.weather_arb.city ?? "not configured"}`,
-          `  NOAA forecast:    ${s.weather_arb.lastNoaaTemp != null ? `${s.weather_arb.lastNoaaTemp}°F` : "pending"}`,
-          `  Confidence:       ${s.weather_arb.lastConfidence != null ? `${Math.round(s.weather_arb.lastConfidence * 100)}%` : "pending"}`,
-          `  Market odds:      ${s.weather_arb.lastMarketOdds != null ? `${Math.round(s.weather_arb.lastMarketOdds * 100)}%` : "pending"}`,
-          ...(edgeLine ? [edgeLine] : []),
+          `  Cities:           ${s.weather_arb.cities.join(", ") || "not configured"}`,
           `  Last check:       ${s.weather_arb.lastCheckAt ?? "never"}`,
+          ...cityLines,
         ]
         return { content: [{ type: "text" as const, text: lines.join("\n") }] }
       },

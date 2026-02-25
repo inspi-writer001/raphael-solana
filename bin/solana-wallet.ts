@@ -11,6 +11,7 @@ import { transferSOL, transferSPL } from "../src/transfer.ts";
 import { raydiumSwap, solToLamports, SOL_MINT } from "../src/swap.ts";
 import { findHighPotentialPairs } from "../src/screener.ts";
 import { strategyManager } from "../src/strategyManager.ts";
+import { createEvmWallet, listEvmWallets } from "../src/evmWallet.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 
@@ -63,17 +64,20 @@ const run = async () => {
 Commands:
   wallet create <name> [--network devnet|mainnet-beta]
   wallet list
+  evm-wallet create <name>
+  evm-wallet list
   balance <wallet-name>
   transfer sol <wallet> <to-address> <amount>
   transfer spl <wallet> <to-address> <mint> <amount>
   swap <wallet> SOL <output-mint> <amount>
   find-pairs
-  trade <wallet> --strategy 3x [--dry-run]
-  scanner start weather-arb <wallet> --office <code> --grid-x <n> --grid-y <n>
-                            --threshold <f> --series <ticker> --amount <n> [--dry-run]
+  scanner start polymarket-weather <evm-wallet-name>
+                --cities nyc,london,seoul,chicago,dallas,miami,paris,toronto,seattle
+                --amount <usdc-per-trade>  [--max-position <usdc>]
+                [--min-edge 0.20]          [--min-fair-value 0.40]
+                [--interval <seconds>]     [--dry-run]
   scanner stop
-  scanner status   (alias: status)
-  agent <wallet> --interval <s> [--dry-run]`);
+  scanner status   (alias: status)`);
     return;
   }
 
@@ -144,31 +148,29 @@ Commands:
     return;
   }
 
+  // --- EVM Wallet ---
+  if (cmd === "evm-wallet") {
+    if (sub === "create") {
+      const r = await createEvmWallet(args[2]);
+      console.log(JSON.stringify(r));
+      return;
+    }
+    if (sub === "list") {
+      const r = await listEvmWallets();
+      console.log(JSON.stringify(r, null, 2));
+      return;
+    }
+  }
+
   // --- Scanner Management ---
   if (cmd === "scanner") {
-    // ── start weather-arb ────────────────────────────────────────────────────
-    if (sub === "start" && args[2] === "weather-arb") {
+    // ── start polymarket-weather ──────────────────────────────────────────────
+    if (sub === "start" && args[2] === "polymarket-weather") {
       const walletName = args[3];
-      const office = opt("office");
-      const gridX = opt("grid-x");
-      const gridY = opt("grid-y");
-      const threshold = opt("threshold");
-      const series = opt("series");
       const amount = opt("amount");
 
-      if (
-        !walletName ||
-        !office ||
-        !gridX ||
-        !gridY ||
-        !threshold ||
-        !series ||
-        !amount
-      ) {
-        console.error("Missing required params. Usage:");
-        console.error(
-          "  scanner start weather-arb <wallet> --office OKX --grid-x 33 --grid-y 35 --threshold 50 --series KXHIGHNY --amount 10 [--dry-run]",
-        );
+      if (!walletName || !amount) {
+        console.error("Usage: scanner start polymarket-weather <evm-wallet> --amount <usdc> [--cities nyc,london,...] [--dry-run]");
         process.exit(1);
       }
 
@@ -180,40 +182,28 @@ Commands:
         await new Promise((r) => setTimeout(r, 500));
       }
 
-      // Prepare log file
-      try {
-        fs.mkdirSync(RAPHAEL_DATA_DIR, { recursive: true });
-      } catch {}
+      try { fs.mkdirSync(RAPHAEL_DATA_DIR, { recursive: true }); } catch {}
       const logPath = path.join(RAPHAEL_DATA_DIR, "weather-arb.log");
       const logFd = fs.openSync(logPath, "a");
 
       const child = spawn(
         process.execPath,
-        [
-          "--experimental-transform-types",
-          __filename,
-          "__daemon_weather",
-          walletName,
-          ...args.slice(4),
-        ],
-        {
-          detached: true,
-          stdio: ["ignore", logFd, logFd],
-          env: { ...process.env, RAPHAEL_DATA_DIR },
-        },
+        ["--experimental-transform-types", __filename, "__daemon_weather", walletName, ...args.slice(4)],
+        { detached: true, stdio: ["ignore", logFd, logFd], env: { ...process.env, RAPHAEL_DATA_DIR } },
       );
       fs.closeSync(logFd);
       child.unref();
 
-      console.log(`✅ Weather Arb scanner started in background.`);
-      console.log(`   Wallet:    ${walletName}`);
-      console.log(`   Office:    ${office} (${gridX},${gridY})`);
-      console.log(`   Threshold: ${threshold}°F`);
-      console.log(`   Series:    ${series}`);
-      console.log(`   Amount:    ${amount} USDC`);
-      console.log(`   Dry-run:   ${flag("dry-run")}`);
-      console.log(`   Log:       ${logPath}`);
-      console.log(`   PID:       ${child.pid}`);
+      const cities = (opt("cities") ?? "nyc,london,seoul,chicago,dallas,miami,paris,toronto,seattle").split(",");
+      console.log(`✅ Polymarket Weather Arb started in background.`);
+      console.log(`   Wallet:      ${walletName}`);
+      console.log(`   Cities:      ${cities.join(", ")}`);
+      console.log(`   Amount:      $${amount} USDC per trade`);
+      console.log(`   Max pos:     $${opt("max-position") ?? "10"} USDC per bracket`);
+      console.log(`   Min edge:    ${opt("min-edge") ?? "0.20"}`);
+      console.log(`   Dry-run:     ${flag("dry-run")}`);
+      console.log(`   Log:         ${logPath}`);
+      console.log(`   PID:         ${child.pid}`);
       process.exit(0);
     }
 
@@ -227,117 +217,70 @@ Commands:
         spawn("pkill", ["-f", "__daemon_weather"]);
         console.log("No live PID found. Sent pkill -f __daemon_weather.");
       }
-      // Remove stale IPC files
-      try {
-        fs.unlinkSync(strategyManager.STATUS_FILE);
-      } catch {}
-      try {
-        fs.unlinkSync(strategyManager.PID_FILE);
-      } catch {}
+      try { fs.unlinkSync(strategyManager.STATUS_FILE); } catch {}
+      try { fs.unlinkSync(strategyManager.PID_FILE); } catch {}
       console.log("Scanner stopped.");
       return;
     }
 
-    // ── status (fall through) ─────────────────────────────────────────────
     if (sub !== "status") {
-      console.log(
-        "Unknown scanner subcommand. Use: start weather-arb | stop | status",
-      );
+      console.log("Unknown scanner subcommand. Use: start polymarket-weather | stop | status");
       return;
     }
   }
 
-  // --- Status (both `scanner status` and `status`) ---
+  // --- Status ---
   if (cmd === "status" || (cmd === "scanner" && sub === "status")) {
     const s = strategyManager.getStatus();
     const logPath = path.join(RAPHAEL_DATA_DIR, "weather-arb.log");
     const pid = readDaemonPid();
 
     console.log(`\n── Status Check ────────────────────────`);
-    console.log(
-      `Weather Arb: ${s.weather_arb.running ? "✅ RUNNING" : "❌ STOPPED"}`,
-    );
+    console.log(`Polymarket Weather Arb: ${s.weather_arb.running ? "✅ RUNNING" : "❌ STOPPED"}`);
     if (s.weather_arb.running) {
-      console.log(`  City:       ${s.weather_arb.city ?? "?"}`);
-      console.log(`  Temp:       ${s.weather_arb.lastNoaaTemp ?? "?"}°F`);
-      console.log(
-        `  Confidence: ${s.weather_arb.lastConfidence != null ? Math.round(s.weather_arb.lastConfidence * 100) + "%" : "?"}`,
-      );
-      console.log(
-        `  Mkt Odds:   ${s.weather_arb.lastMarketOdds != null ? Math.round(s.weather_arb.lastMarketOdds * 100) + "%" : "?"}`,
-      );
-      if (
-        s.weather_arb.lastConfidence != null &&
-        s.weather_arb.lastMarketOdds != null
-      ) {
-        const edge =
-          s.weather_arb.lastConfidence - s.weather_arb.lastMarketOdds;
-        console.log(`  Edge:       ${Math.round(edge * 100)}%`);
-      }
+      console.log(`  Cities:     ${s.weather_arb.cities.join(", ") || "?"}`);
       console.log(`  Last check: ${s.weather_arb.lastCheckAt ?? "never"}`);
+      for (const r of s.weather_arb.lastReadings) {
+        const edgeStr = r.bestEdge != null ? ` edge=${Math.round(r.bestEdge * 100)}%` : ""
+        const bracketStr = r.targetBracket ? ` bracket="${r.targetBracket}"` : ""
+        const skipStr = r.skippedReason ? ` (${r.skippedReason})` : ""
+        console.log(`  ${r.city.padEnd(8)}: ${r.forecastHighF}°F${bracketStr}${edgeStr}${skipStr}`)
+      }
     }
-    if (pid !== null) {
-      console.log(
-        `  PID:        ${pid} (${isPidAlive(pid) ? "alive" : "dead"})`,
-      );
-    }
-    if (fs.existsSync(logPath)) {
-      console.log(`  Log:        ${logPath}`);
-    }
+    if (pid !== null) console.log(`  PID:        ${pid} (${isPidAlive(pid) ? "alive" : "dead"})`);
+    if (fs.existsSync(logPath)) console.log(`  Log:        ${logPath}`);
     if (s._source) console.log(`  Source:     ${s._source}`);
-    if (s._stale) console.log(`  ⚠  Status data is stale (>10 min old)`);
+    if (s._stale)  console.log(`  ⚠  Status data is stale (>10 min old)`);
     return;
   }
 
   // --- Hidden Background Daemon Loop ---
   if (cmd === "__daemon_weather") {
     const walletName = sub;
-    const office = opt("office");
-    const gridX = opt("grid-x");
-    const gridY = opt("grid-y");
-    const threshold = opt("threshold");
-    const series = opt("series");
     const amount = opt("amount");
-
-    if (
-      !walletName ||
-      !office ||
-      !gridX ||
-      !gridY ||
-      !threshold ||
-      !series ||
-      !amount
-    ) {
+    if (!walletName || !amount) {
       console.error("[daemon] Missing required parameters. Exiting.");
       process.exit(1);
     }
 
-    console.log(
-      `[daemon] Starting weather arb scanner at ${new Date().toISOString()}`,
-    );
-    console.log(
-      `[daemon] Config: wallet=${walletName} office=${office} grid=${gridX},${gridY} threshold=${threshold}°F series=${series} amount=${amount} dry-run=${flag("dry-run")}`,
-    );
+    const cities = (opt("cities") ?? "nyc,london,seoul,chicago,dallas,miami,paris,toronto,seattle").split(",");
+    console.log(`[daemon] Starting Polymarket Weather Arb at ${new Date().toISOString()}`);
+    console.log(`[daemon] wallet=${walletName} cities=${cities.join(",")} amount=${amount} dry-run=${flag("dry-run")}`);
 
     strategyManager.startWeatherArb({
       walletName,
-      gridpointOffice: office,
-      gridX: parseInt(gridX),
-      gridY: parseInt(gridY),
-      tempThresholdF: parseFloat(threshold),
-      kalshiSeriesTicker: series,
-      tradeAmountUsdc: parseFloat(amount),
-      minConfidence: parseFloat(opt("min-confidence") ?? "0.9"),
-      maxMarketOdds: parseFloat(opt("max-odds") ?? "0.4"),
-      intervalSeconds: parseInt(opt("interval") ?? "120"),
-      dryRun: flag("dry-run"),
+      cities,
+      tradeAmountUsdc:  parseFloat(amount),
+      maxPositionUsdc:  parseFloat(opt("max-position") ?? "10"),
+      minEdge:          parseFloat(opt("min-edge")       ?? "0.20"),
+      minFairValue:     parseFloat(opt("min-fair-value") ?? "0.40"),
+      intervalSeconds:  parseInt(opt("interval")         ?? "120"),
+      dryRun:           flag("dry-run"),
     });
 
-    // Keep alive — signal handlers in startWeatherArb handle shutdown
     await new Promise(() => {});
   }
 
-  // --- Stubs (not yet implemented in this version) ---
   if (cmd === "agent" || cmd === "trade") {
     console.log(`${cmd} command not yet implemented in this version.`);
     return;
