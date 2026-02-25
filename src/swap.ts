@@ -43,71 +43,80 @@ export const raydiumQuote = async (
   return res.json() as Promise<RaydiumSwapCompute>
 }
 
-async function sendRawTx(rpcUrl: string, txBase64: string): Promise<string> {
-  console.log(`[RPC] Sending transaction...`)
-
-  const payload = {
-    jsonrpc: "2.0",
-    id: Date.now(),
-    method: "sendTransaction",
-    params: [txBase64, { encoding: "base64", skipPreflight: true }]
-  }
-
+async function rpcPost<T>(rpcUrl: string, method: string, params: unknown[]): Promise<T> {
   const res = await fetch(rpcUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method, params }),
   })
-
-  const responseText = await res.text()
-  const data = JSON.parse(responseText) as { result?: string; error?: { message: string; code?: number } }
-  
-  if (data.error) {
-    throw new Error(`RPC error: ${data.error.message}`)
-  }
-  
-  if (!data.result) {
-    throw new Error(`No signature`)
-  }
-
-  return data.result
+  const data = await res.json() as { result?: T; error?: { message: string; code?: number } }
+  if (data.error) throw new Error(`RPC ${method} error: ${data.error.message}`)
+  return data.result as T
 }
 
-async function confirmTx(rpcUrl: string, signature: string, timeout = 30000): Promise<void> {
-  const startTime = Date.now()
-  let attempts = 0
-  
-  while (Date.now() - startTime < timeout) {
-    try {
-      const res = await fetch(rpcUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "getSignatureStatuses",
-          params: [[signature]],
-        }),
-      })
+async function simulateTx(rpcUrl: string, txBase64: string): Promise<void> {
+  const result = await rpcPost<{ value: { err: unknown; logs?: string[] } }>(
+    rpcUrl,
+    "simulateTransaction",
+    [txBase64, { encoding: "base64", commitment: "confirmed" }],
+  )
+  if (result.value.err) {
+    const logs = result.value.logs?.slice(-5).join("\n") ?? ""
+    throw new Error(`Simulation failed: ${JSON.stringify(result.value.err)}\n${logs}`)
+  }
+  console.log(`[RPC] Simulation OK`)
+}
 
-      const data = await res.json() as { result?: { value?: Array<{ confirmationStatus?: string } | null> } }
-      const status = data.result?.value?.[0]?.confirmationStatus
-      
+async function sendRawTx(rpcUrl: string, txBase64: string): Promise<string> {
+  const sig = await rpcPost<string>(
+    rpcUrl,
+    "sendTransaction",
+    [txBase64, { encoding: "base64", skipPreflight: true }],
+  )
+  if (!sig) throw new Error(`sendTransaction returned no signature`)
+  return sig
+}
+
+// Solana transactions are regularly dropped — resend every 2s until confirmed or blockhash expires (~60s).
+async function confirmTx(rpcUrl: string, signature: string, signedTxBase64: string, timeout = 60000): Promise<void> {
+  const startTime = Date.now()
+  let lastResend = 0
+  let polls = 0
+
+  while (Date.now() - startTime < timeout) {
+    // Resend every 2s so the tx stays in validators' queues
+    if (Date.now() - lastResend >= 2000) {
+      sendRawTx(rpcUrl, signedTxBase64).catch(() => {}) // fire-and-forget
+      lastResend = Date.now()
+    }
+
+    try {
+      type StatusResult = Array<{ confirmationStatus?: string; err?: unknown } | null>
+      const value = await rpcPost<{ value: StatusResult }>(
+        rpcUrl,
+        "getSignatureStatuses",
+        [[signature]],
+      )
+      const entry = value.value[0]
+
+      if (entry?.err) throw new Error(`Transaction failed on-chain: ${JSON.stringify(entry.err)}`)
+
+      const status = entry?.confirmationStatus
       if (status === "confirmed" || status === "finalized") {
-        console.log(`[RPC] ✅ Confirmed`)
+        console.log(`[RPC] ✅ Confirmed (${Math.round((Date.now() - startTime) / 1000)}s)`)
         return
       }
-      
-      attempts++
-      if (attempts % 5 === 0) {
-        console.log(`[RPC] Waiting... (status: ${status || "pending"})`)
-      }
-    } catch (e) {}
-    
+
+      polls++
+      if (polls % 5 === 0) console.log(`[RPC] Waiting... ${Math.round((Date.now() - startTime) / 1000)}s (status: ${status ?? "unknown"})`)
+    } catch (e) {
+      if (e instanceof Error && e.message.startsWith("Transaction failed")) throw e
+    }
+
     await new Promise(r => setTimeout(r, 1000))
   }
 
-  throw new Error(`Timeout`)
+  throw new Error(`Transaction not confirmed within ${timeout / 1000}s — blockhash likely expired`)
 }
 
 export const raydiumSwap = async (
@@ -171,10 +180,12 @@ export const raydiumSwap = async (
   transaction.sign([keypair])
   const signedBase64 = Buffer.from(transaction.serialize()).toString("base64")
 
+  await simulateTx(rpc, signedBase64)
+
   const signature = await sendRawTx(rpc, signedBase64)
   console.log(`[RPC] TX: ${signature}`)
-  
-  await confirmTx(rpc, signature)
+
+  await confirmTx(rpc, signature, signedBase64)
 
   const mintInfo = await getMint(connection, new PublicKey(outputMint))
   const outputAmount = parseInt(quoteResponse.data?.outputAmount || "0") / 10 ** mintInfo.decimals
