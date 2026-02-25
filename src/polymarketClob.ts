@@ -10,7 +10,7 @@ import type { ethers as EthersType } from "ethers"
 
 const CLOB_API = "https://clob.polymarket.com"
 const POLYGON_RPC = process.env["POLYGON_RPC_URL"] ?? "https://polygon-rpc.com"
-const USDC_POLYGON = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+const USDC_POLYGON = "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"
 
 // Neg Risk CTF Exchange — used for all Polymarket weather markets (negRisk: true)
 const NEG_RISK_CTF_EXCHANGE = "0xC5d563A36AE78145C45a50134d48A1215220f80a"
