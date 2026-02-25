@@ -130,6 +130,9 @@ Commands:
       SOL_MINT,
       args[3],
       solToLamports(parseFloat(args[4])),
+      300,
+      undefined,
+      1,  // direct route only for manual swaps
     );
     console.log(JSON.stringify(r));
     return;

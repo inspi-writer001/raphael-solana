@@ -125,8 +125,19 @@ export const raydiumSwap = async (
   outputMint: string,
   amountLamports: number,
   slippageBps = 300,
-  rpcUrl?: string
+  rpcUrl?: string,
+  maxHops = Infinity,
 ): Promise<SwapResult> => {
+  // Raydium routes sub-$1 swaps through illiquid intermediate tokens, producing ~40% worse rates.
+  // 1_000_000 lamports ≈ 0.001 SOL; for token inputs 1_000_000 units = $1 USDC.
+  // Enforce a floor of 1_000_000 base units (~$1) before even fetching a quote.
+  if (amountLamports < 1_000_000) {
+    throw new Error(
+      `Trade amount ${amountLamports} is below the 1,000,000 base-unit minimum. ` +
+      `Raydium routes micro-trades through illiquid intermediate pools — refusing to execute.`
+    )
+  }
+
   const rpc = rpcUrl || process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com"
   const connection = new Connection(rpc, "confirmed")
   const keypair = await loadKeypair(walletName)
@@ -137,7 +148,18 @@ export const raydiumSwap = async (
     throw new Error(`Quote failed`)
   }
 
+  const route = quoteResponse.data!.routePlan
+  const routeStr = route.map(h => `${h.inputMint.slice(0,4)}..→${h.outputMint.slice(0,4)}.. [${h.poolId.slice(0,8)}]`).join(" | ")
+  console.log(`[RAYDIUM] Route (${route.length} hop${route.length !== 1 ? "s" : ""}): ${routeStr}`)
   console.log(`[RAYDIUM] Output: ${quoteResponse.data?.outputAmount}`)
+
+  if (route.length > maxHops) {
+    throw new Error(
+      `Raydium routed through ${route.length} hops (max ${maxHops}). ` +
+      `Refusing to execute — likely routing through illiquid intermediate tokens. ` +
+      `Route: ${routeStr}`
+    )
+  }
 
   let computeUnitPrice = "1000000"
   try {

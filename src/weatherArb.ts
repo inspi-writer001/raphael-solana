@@ -211,6 +211,9 @@ export const runWeatherArbTick = async (
         USDC_MAINNET_MINT,
         reading.resolvedYesMint,
         config.tradeAmountUsdc * 1_000_000,
+        300,
+        undefined,
+        1,  // direct route only — prediction market tokens should have direct USDC pools
       )
     } else if (reading.hasEdge && config.dryRun) {
       console.log(
