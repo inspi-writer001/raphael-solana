@@ -12,6 +12,7 @@ import { raydiumSwap, solToLamports, SOL_MINT } from "../src/swap.ts";
 import { findHighPotentialPairs } from "../src/screener.ts";
 import { strategyManager } from "../src/strategyManager.ts";
 import { createEvmWallet, listEvmWallets } from "../src/evmWallet.ts";
+import { getEvmBalance, getTokenBalance } from "../src/evmBalance.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 
@@ -79,6 +80,23 @@ Commands:
   scanner stop
   scanner status   (alias: status)`);
     return;
+    if (sub === "balance") {
+      const walletName = args[2];
+      if (!walletName) {
+        console.error("Usage: evm-wallet balance <wallet-name> [--token <address>]");
+        process.exit(1);
+      }
+      const tokenAddr = opt("token");
+      
+      if (tokenAddr) {
+        const r = await getTokenBalance(walletName, tokenAddr);
+        console.log(JSON.stringify(r, (_, v) => typeof v === "bigint" ? v.toString() : v, 2));
+      } else {
+        const r = await getEvmBalance(walletName);
+        console.log(JSON.stringify(r, (_, v) => typeof v === "bigint" ? v.toString() : v, 2));
+      }
+      return;
+    }
   }
 
   // --- Wallet / Balance / Transfer ---
@@ -158,6 +176,23 @@ Commands:
     if (sub === "list") {
       const r = await listEvmWallets();
       console.log(JSON.stringify(r, null, 2));
+      return;
+    }
+    if (sub === "balance") {
+      const walletName = args[2];
+      if (!walletName) {
+        console.error("Usage: evm-wallet balance <wallet-name> [--token <address>]");
+        process.exit(1);
+      }
+      const tokenAddr = opt("token");
+      
+      if (tokenAddr) {
+        const r = await getTokenBalance(walletName, tokenAddr);
+        console.log(JSON.stringify(r, (_, v) => typeof v === "bigint" ? v.toString() : v, 2));
+      } else {
+        const r = await getEvmBalance(walletName);
+        console.log(JSON.stringify(r, (_, v) => typeof v === "bigint" ? v.toString() : v, 2));
+      }
       return;
     }
   }
