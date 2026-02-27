@@ -5,38 +5,38 @@ and developers integrating with this toolkit.
 
 ## Overview
 
-The agentic-wallet provides a Solana agent wallet with:
+The agentic-wallet provides a Solana + Polygon agent wallet with:
 
-- Programmatic wallet creation and encrypted key storage
+- Programmatic wallet creation and encrypted key storage (Solana + EVM)
 - Autonomous transaction signing (SOL + SPL tokens)
 - Real-time pump.fun graduation signal detection via WebSocket
-- Jupiter V6 swap execution
-- Autonomous trading agent loop
+- Raydium Trade API token swaps
+- Polymarket weather arbitrage across 9 global cities
+- 6 OpenClaw plugin tools for natural language control
 
 ---
 
 ## Skill: `solana-wallet`
 
 **Category**: Blockchain / DeFi
-**Network**: Solana (devnet + mainnet-beta)
+**Networks**: Solana (devnet + mainnet-beta), Polygon PoS
 **Install**: `clawhub install solana-wallet`
 
 ---
 
-### Wallet Management
+### Solana Wallet Management
 
 #### `createWallet(name, network?)`
 
 Generate a new Solana keypair, encrypt the private key, and store it locally.
 
-```ts
-// Result: { name, publicKey, network, createdAt, tags }
+```
 solana-wallet wallet create trader1 --network devnet
 ```
 
 #### `listWallets()`
 
-List all managed wallets with public keys (private keys never exposed).
+List all managed Solana wallets with public keys (private keys never exposed).
 
 ```
 solana-wallet wallet list
@@ -52,7 +52,38 @@ solana-wallet balance trader1
 
 ---
 
-### Transfers
+### EVM Wallet Management (Polygon)
+
+EVM wallets are separate from Solana wallets — they use secp256k1 keys and live on Polygon PoS. Required for Polymarket trading.
+
+#### `createEvmWallet(name)`
+
+Generate a new Polygon/EVM keypair, encrypt, and store it locally. Returns the Polygon address for funding.
+
+```
+solana-wallet evm-wallet create polymarket1
+```
+
+#### `listEvmWallets()`
+
+List all managed EVM wallets with Polygon addresses.
+
+```
+solana-wallet evm-wallet list
+```
+
+#### `evmBalance(name)`
+
+MATIC balance + optional ERC-20 token balance.
+
+```
+solana-wallet evm-wallet balance polymarket1
+solana-wallet evm-wallet balance polymarket1 --token 0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174
+```
+
+---
+
+### Solana Transfers
 
 #### `transferSOL(from, to, amountSol)`
 
@@ -72,11 +103,11 @@ solana-wallet transfer spl trader1 <recipient-address> <mint-address> 100
 
 ---
 
-### Trading
+### Solana Trading
 
-#### `jupiterSwap(wallet, inputMint, outputMint, amountLamports)`
+#### `raydiumSwap(wallet, inputMint, outputMint, amountLamports)`
 
-Swap tokens via Jupiter V6 aggregator. Best routing across all Solana DEXes.
+Swap tokens via Raydium Trade API. Direct route only (`maxHops=1`). Minimum 1,000,000 lamports (~$0.20).
 
 ```
 solana-wallet swap trader1 SOL <token-mint> 0.1
@@ -93,51 +124,88 @@ Returns tokens scored 0-100 based on:
 - Confirmed Raydium liquidity (via DexScreener)
 
 ```
-solana-wallet find-pairs --min-score 65
-```
-
-#### `threeXStrategy(portfolioSol, maxRiskPercent?)`
-
-Automated trade decision engine. Scores recent pump.fun graduates, confirms
-liquidity, sizes the position as a % of portfolio, checks SOL sufficiency.
-
-```
-solana-wallet trade trader1 --strategy 3x --dry-run
+solana-wallet find-pairs
 ```
 
 ---
 
-### Autonomous Agent
+### Polymarket Weather Arbitrage
 
-#### `runAgentLoop(config)`
+Exploits the spread between Open-Meteo global temperature forecasts and Polymarket binary bracket prices.
 
-Continuous monitoring loop:
+**Edge model:**
+- Fetches high-temperature forecast from Open-Meteo (free, global)
+- Fetches open Polymarket brackets via Gamma API (public)
+- Computes fair probability using a normal CDF (σ=2°F same-day, σ=4°F next-day)
+- Places YES orders when `fairValue − askPrice ≥ minEdge`
 
-1. Connects to pump.fun WebSocket for live graduation events
-2. Scores incoming tokens in real-time
-3. Runs threeXStrategy every `intervalSeconds`
-4. Executes trades (or logs in dry-run mode)
+**Cities supported:** nyc, london, seoul, chicago, dallas, miami, paris, toronto, seattle
 
+#### `runPolymarketWeatherArbTick(config, onReading)`
+
+One tick of the weather arb scanner. Called on a timer by `strategyManager`.
+
+#### `strategyManager.startWeatherArb(config)` / `stopWeatherArb()`
+
+Daemon scanner. Polls forecasts and places orders on a configurable interval.
+
+```bash
+# Via CLI:
+solana-wallet scanner start polymarket-weather polymarket1 \
+  --amount 5 --cities nyc,london,seoul --dry-run
+
+solana-wallet scanner stop
+solana-wallet scanner status
 ```
-solana-wallet agent trader1 --interval 300 --max-risk 5 --dry-run
-```
 
-**Config options:**
-| Flag | Default | Description |
+**Config parameters:**
+
+| Parameter | Default | Description |
 |---|---|---|
-| `--interval` | 300 | Seconds between strategy evaluations |
-| `--max-risk` | 5 | Max % of SOL portfolio per trade |
-| `--dry-run` | false | Log decisions without executing |
+| `walletName` | required | EVM wallet name |
+| `cities` | all 9 | Array of city keys |
+| `tradeAmountUsdc` | required | USDC per trade |
+| `maxPositionUsdc` | 10 | Hard cap per bracket |
+| `minEdge` | 0.20 | Minimum edge (fair − ask) to trade |
+| `minFairValue` | 0.40 | Minimum fair probability to consider |
+| `intervalSeconds` | 120 | Poll interval |
+| `dryRun` | true | Log without placing orders |
+
+**Required:** `MASTER_ENCRYPTION_PASSWORD_CRYPTO`, `MASTER_ENCRYPTED`, `MASTER_SALT`
+**Polygon RPC:** defaults to public Polygon mainnet RPC
+
+---
+
+### OpenClaw Plugin Tools
+
+Six tools registered via `src/plugin.ts`. Invoked by the agent directly — no CLI needed.
+
+| Tool | Parameters | Description |
+|---|---|---|
+| `create_evm_wallet` | `name` | Create a Polygon wallet; returns address for USDC funding |
+| `list_evm_wallets` | — | List EVM wallets and Polygon addresses |
+| `check_usdc_balance` | `wallet_name` | Check USDC.e balance on Polygon |
+| `start_weather_arb` | `wallet_name`, `trade_amount_usdc`, `cities?`, `dry_run?`, ... | Start the weather arb scanner |
+| `stop_weather_arb` | — | Stop the running scanner |
+| `get_strategy_status` | — | Per-city forecast, bracket, edge%, skip reason |
+
+**Typical agent flow:**
+1. `create_evm_wallet { name: "polymarket1" }` → get Polygon address
+2. User sends USDC to the address
+3. `check_usdc_balance { wallet_name: "polymarket1" }` → confirm arrival
+4. `start_weather_arb { wallet_name: "polymarket1", trade_amount_usdc: 5, dry_run: true }` → dry run
+5. `get_strategy_status` → review per-city readings
+6. `start_weather_arb { ..., dry_run: false }` → go live
 
 ---
 
 ## Security Model
 
-| Layer | What                                                  | Where                        |
-| ----- | ----------------------------------------------------- | ---------------------------- |
-| 1     | Human password (MASTER_ENCRYPTION_PASSWORD_CRYPTO)    | Memory only, from env        |
-| 2     | Encrypted master key (MASTER_ENCRYPTED + MASTER_SALT) | .env file                    |
-| 3     | Encrypted wallet private keys (per-wallet salt)       | ~/.solana-agent-wallets.json |
+| Layer | What | Where |
+|---|---|---|
+| 1 | Human password (`MASTER_ENCRYPTION_PASSWORD_CRYPTO`) | Memory only, from env |
+| 2 | Encrypted master key (`MASTER_ENCRYPTED` + `MASTER_SALT`) | .env file |
+| 3 | Encrypted wallet private keys (per-wallet salt) | `~/.raphael/wallets.json` (Solana) / `~/.raphael/evm-wallets.json` (EVM) |
 
 - AES-256-GCM encryption with PBKDF2 key derivation (100k iterations, SHA-256)
 - Private keys decrypted in memory only at signing time, never written back
@@ -147,84 +215,51 @@ solana-wallet agent trader1 --interval 300 --max-risk 5 --dry-run
 
 ## Required Environment Variables
 
-| Variable                            | Required | Description                                               |
-| ----------------------------------- | -------- | --------------------------------------------------------- |
-| `MASTER_ENCRYPTION_PASSWORD_CRYPTO` | ✓        | Root password for key derivation                          |
-| `MASTER_ENCRYPTED`                  | ✓        | Encrypted master key (base64)                             |
-| `MASTER_SALT`                       | ✓        | Master key salt (base64)                                  |
-| `SOLANA_RPC_URL`                    | ✓        | RPC endpoint (devnet or mainnet)                          |
-| `WALLET_STORE_PATH`                 | optional | JSON store path (default: `~/.solana-agent-wallets.json`) |
-| `PUMPPORTAL_WS`                     | optional | pump.fun WS (default: `wss://pumpportal.fun/api/data`)    |
-
----
-
-### Background Scanner Manager
-
-#### `strategyManager.startPumpfun(config)` / `stopPumpfun()`
-
-Non-blocking `setInterval`-based pumpfun scanner. Wraps `runPumpfunTick` so the
-strategy runs on a timer rather than a blocking `while(true)` loop.
-
-```
-solana-wallet scanner start pumpfun trader1 --interval 300 --dry-run
-solana-wallet scanner stop  pumpfun
-solana-wallet scanner status
-```
-
-#### `strategyManager.startWeatherArb(config)` / `stopWeatherArb()`
-
-Polls NOAA gridpoint forecasts and Kalshi bracket markets to detect spread opportunities.
-Buys when NOAA confidence ≥ `minConfidence` (default 90%) and Kalshi bracket-sum
-probability ≤ `maxMarketOdds` (default 40%). SPL mint resolved via DFlow API when
-`DFLOW_API_KEY` is set; without it, the scanner runs read-only regardless of `--dry-run`.
-
-```
-solana-wallet scanner start weather-arb trader1 \
-  --office OKX --grid-x 33 --grid-y 35 \
-  --threshold 50 --series KXHIGHNY --amount 10 --dry-run
-solana-wallet scanner stop  weather-arb
-```
-
-**Config parameters:**
-| Parameter | Default | Description |
+| Variable | Required | Description |
 |---|---|---|
-| `--office` | required | NOAA office code (e.g. OKX=NYC, LOT=Chicago, SEW=Seattle) |
-| `--grid-x` | required | NOAA gridpoint X coordinate |
-| `--grid-y` | required | NOAA gridpoint Y coordinate |
-| `--threshold` | required | Temperature threshold in °F for the binary event |
-| `--series` | required | Kalshi series ticker (e.g. KXHIGHNY, KXHIGHCHI, KXHIGHLA) |
-| `--amount` | required | USDC to spend per trade |
-| `--interval` | 120 | Poll interval in seconds |
-| `--dry-run` | false | Log decisions without executing trades |
-
-**Required environment variables:** same as existing (`SOLANA_RPC_URL`, `MASTER_ENCRYPTION_PASSWORD_CRYPTO`, `MASTER_ENCRYPTED`, `MASTER_SALT`).
-**Optional:** `DFLOW_API_KEY` — enables live execution by resolving the YES-outcome SPL mint from the Kalshi ticker.
-
-**OpenClaw plugin tools:**
-- `start_weather_arb` — start scanner with city + Kalshi series config
-- `stop_weather_arb` — stop running scanner
-- `get_strategy_status` — formatted status of both scanners
+| `MASTER_ENCRYPTION_PASSWORD_CRYPTO` | ✓ | Root password for key derivation |
+| `MASTER_ENCRYPTED` | ✓ | Encrypted master key (base64) |
+| `MASTER_SALT` | ✓ | Master key salt (base64) |
+| `SOLANA_RPC_URL` | optional | RPC endpoint (default: devnet) |
+| `RAPHAEL_DATA_DIR` | optional | Data directory (default: `~/.raphael`) |
+| `WALLET_STORE_PATH` | optional | Solana wallet JSON (default: `$RAPHAEL_DATA_DIR/wallets.json`) |
+| `EVM_WALLET_STORE_PATH` | optional | EVM wallet JSON (default: `$RAPHAEL_DATA_DIR/evm-wallets.json`) |
+| `PUMPPORTAL_WS` | optional | pump.fun WS (default: `wss://pumpportal.fun/api/data`) |
 
 ---
 
 ## Signal Sources
 
-| Source                     | Type      | Use                                       |
-| -------------------------- | --------- | ----------------------------------------- |
-| `pumpportal.fun` WebSocket | Real-time | Primary: graduation events                |
-| DexScreener REST API       | Polling   | Secondary: Raydium liquidity confirmation |
-| Jupiter V6 Quote API       | On-demand | Pre-trade routing + output estimation     |
+| Source | Type | Use |
+|---|---|---|
+| `pumpportal.fun` WebSocket | Real-time | pump.fun graduation events |
+| DexScreener REST API | Polling | Raydium liquidity confirmation |
+| Raydium Trade API | On-demand | Token swaps + routing |
+| Open-Meteo REST API | Polling | Global temperature forecasts (free, no key) |
+| Polymarket Gamma API | Polling | Weather bracket market discovery (public) |
+| Polymarket CLOB API | On-demand | Order placement (L1/L2 auth) |
 
 ---
 
 ## Data Flow
 
+### pump.fun / 3x strategy
 ```
 pump.fun WebSocket
   └─ graduation event
        └─ scoreGraduatedToken() → ScoredToken (0-100)
             └─ confirmOnDexScreener() → liquidity check
                  └─ threeXStrategy() → TradeDecision
-                      └─ jupiterSwap() → SwapResult
+                      └─ raydiumSwap() → SwapResult
                            └─ explorerUrl logged + returned
+```
+
+### Polymarket weather arb
+```
+Open-Meteo API → forecastHighF
+Polymarket Gamma API → brackets[]
+  └─ normalCDF pricing → fairProbability per bracket
+       └─ edge = fairProbability − askPrice
+            └─ edge ≥ minEdge → Polymarket CLOB placeOrder()
+                 └─ orderId logged, status tracked
 ```

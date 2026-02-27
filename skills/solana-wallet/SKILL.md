@@ -1,83 +1,112 @@
 ---
 name: solana-wallet
 description: >
-  Manage Solana agent wallets and run weather arbitrage scanner.
+  Manage Solana and Polygon wallets, run Polymarket weather arbitrage, and execute Raydium swaps.
 homepage: https://github.com/inspiration-gx/raphael-solana
 user-invocable: true
 ---
 
-# Solana Wallet Agent Skill
+# Solana + Polymarket Wallet Agent Skill
 
-You control Solana wallets and a weather arbitrage scanner using a CLI.
+You control Solana wallets, Polygon EVM wallets, and a Polymarket weather arbitrage scanner.
 
 ## CRITICAL RULES
 
-1. **ALWAYS use exec with this exact prefix for ALL commands:**
+1. **For CLI commands, use exec with this exact prefix:**
    ```
    node --experimental-transform-types /root/raphael-solana/bin/solana-wallet.ts
    ```
 2. **NEVER use bare `solana-wallet`** — it is not on PATH in this environment.
 3. **NEVER delegate these commands to subagents.** Run them yourself directly with exec.
-4. **NEVER spawn subagents for scanner operations.** Always exec directly.
-5. Ignore warnings about "ExperimentalWarning", "bigint", or "punycode" — these are harmless.
+4. Ignore warnings about "ExperimentalWarning", "bigint", or "punycode" — these are harmless.
+5. **Prefer plugin tools over CLI** when available — `create_evm_wallet`, `check_usdc_balance`, `start_weather_arb`, `stop_weather_arb`, `get_strategy_status`, `list_evm_wallets` are all available as direct tools.
 
-## Command Reference
+## Plugin Tools (use these first — no exec needed)
+
+| Tool | When to use |
+|---|---|
+| `create_evm_wallet` | User wants to create a Polygon wallet for Polymarket |
+| `list_evm_wallets` | User asks what EVM wallets exist |
+| `check_usdc_balance` | User wants to verify USDC arrived on Polygon |
+| `start_weather_arb` | User wants to start the weather arb scanner |
+| `stop_weather_arb` | User wants to stop the scanner |
+| `get_strategy_status` | User asks about scanner status, city readings, edges |
+
+## CLI Command Reference
 
 The CLI prefix for ALL commands below is:
 ```
 node --experimental-transform-types /root/raphael-solana/bin/solana-wallet.ts
 ```
 
-### Wallet Commands
+### Solana Wallet Commands
 
 | User says | Command |
-|-----------|---------|
-| Check balance | `<prefix> balance <wallet-name>` |
-| Create wallet | `<prefix> wallet create <name> [--network devnet\|mainnet-beta]` |
-| List wallets | `<prefix> wallet list` |
+|---|---|
+| Check Solana balance | `<prefix> balance <wallet-name>` |
+| Create Solana wallet | `<prefix> wallet create <name> [--network devnet\|mainnet-beta]` |
+| List Solana wallets | `<prefix> wallet list` |
 | Transfer SOL | `<prefix> transfer sol <wallet> <to-address> <amount>` |
-| Transfer SPL | `<prefix> transfer spl <wallet> <to-address> <mint> <amount>` |
+| Transfer SPL token | `<prefix> transfer spl <wallet> <to-address> <mint> <amount>` |
+| Swap tokens | `<prefix> swap <wallet> SOL <output-mint> <amount>` |
+| Find pump.fun plays | `<prefix> find-pairs` |
+
+### EVM / Polygon Wallet Commands
+
+| User says | Command |
+|---|---|
+| Create Polygon wallet | `<prefix> evm-wallet create <name>` |
+| List Polygon wallets | `<prefix> evm-wallet list` |
+| Check MATIC / ERC-20 balance | `<prefix> evm-wallet balance <name> [--token <address>]` |
 
 ### Scanner Commands
 
 | User says | Command |
-|-----------|---------|
-| Start weather arb | `<prefix> scanner start weather-arb <wallet> --office <code> --grid-x <n> --grid-y <n> --threshold <f> --series <ticker> --amount <n> [--dry-run]` |
-| Stop weather arb | `<prefix> scanner stop` |
-| Check status | `<prefix> status` |
-| Find pairs | `<prefix> find-pairs` |
-| Trade | `<prefix> trade <wallet> --strategy 3x [--dry-run]` |
-| Swap | `<prefix> swap <wallet> SOL <output-mint> <amount>` |
+|---|---|
+| Start weather arb | See full command below |
+| Stop scanner | `<prefix> scanner stop` |
+| Check scanner status | `<prefix> scanner status` |
 
-### Weather Arb Examples
-
-Start NYC scanner (dry run):
+**Start weather arb (full command):**
 ```
-node --experimental-transform-types /root/raphael-solana/bin/solana-wallet.ts scanner start weather-arb trader1 --office OKX --grid-x 33 --grid-y 35 --threshold 50 --series KXHIGHNY --amount 10 --dry-run
-```
-
-Check status:
-```
-node --experimental-transform-types /root/raphael-solana/bin/solana-wallet.ts status
+<prefix> scanner start polymarket-weather <evm-wallet-name> \
+  --amount <usdc-per-trade> \
+  [--cities nyc,london,seoul,chicago,dallas,miami,paris,toronto,seattle] \
+  [--max-position <usdc>] \
+  [--min-edge 0.20] \
+  [--min-fair-value 0.40] \
+  [--interval <seconds>] \
+  [--dry-run]
 ```
 
-Stop scanner:
-```
-node --experimental-transform-types /root/raphael-solana/bin/solana-wallet.ts scanner stop
-```
+## Typical Agent Flow: Polymarket Weather Arb
 
-### City Configurations
+1. Create EVM wallet (plugin: `create_evm_wallet` or CLI: `evm-wallet create polymarket1`)
+2. Tell user: **"Send USDC (Polygon PoS network) to: `<address>`"**
+3. Poll balance until funded: `check_usdc_balance { wallet_name: "polymarket1" }`
+4. Start dry run: `start_weather_arb { wallet_name: "polymarket1", trade_amount_usdc: 5, dry_run: true }`
+5. Check readings after 2 minutes: `get_strategy_status`
+6. If edges look reasonable, restart without dry run: `start_weather_arb { ..., dry_run: false }`
 
-| City | Office | Grid X | Grid Y | Series |
-|------|--------|--------|--------|--------|
-| NYC | OKX | 33 | 35 | KXHIGHNY |
-| Chicago | LOT | 65 | 76 | KXHIGHCHI |
-| LA | LOX | 154 | 44 | KXHIGHLA |
+## Supported Cities for Weather Arb
+
+| Key | City |
+|---|---|
+| `nyc` | New York City |
+| `london` | London |
+| `seoul` | Seoul |
+| `chicago` | Chicago |
+| `dallas` | Dallas |
+| `miami` | Miami |
+| `paris` | Paris |
+| `toronto` | Toronto |
+| `seattle` | Seattle |
 
 ## Rules
 
-- Always confirm before real trades (unless user says "just do it")
-- Always suggest --dry-run for first-time setups
-- Report Solana Explorer URL after transactions
+- Always confirm before live trades (unless user explicitly says "just do it" or "no dry run")
+- Always suggest `--dry-run` / `dry_run: true` for first-time scanner starts
+- Report Solana Explorer URL after Solana transactions
 - Never display private keys
-- For devnet: suggest `solana airdrop 2 <address> --url devnet` to fund wallets
+- For Polymarket: the USDC must be on **Polygon PoS network** — not Solana, not Ethereum mainnet
+- For devnet Solana funding: suggest `solana airdrop 2 <address> --url devnet`

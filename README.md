@@ -1,52 +1,46 @@
 # Raphael
 
-Autonomous Solana agent wallet — installable as an OpenClaw skill.
+Autonomous Solana + Polygon agent wallet — installable as an OpenClaw skill.
 
-Tell your agent: _"check my balance", "transfer 0.5 SOL", "find 3x plays", "run the trading agent", "start weather arb for NYC"_ — it handles everything on-chain, autonomously.
+Tell your agent: _"create an EVM wallet", "check my USDC balance", "start the weather arb scanner", "check status"_ — it handles everything on-chain, autonomously.
 
 ## What it does
 
-- **Multi-wallet management** — create and name wallets, private keys encrypted at rest
+- **Solana wallet management** — create and name wallets, private keys encrypted at rest
+- **EVM wallet management** — create Polygon wallets for Polymarket trading (separate secp256k1 keys)
 - **SOL + SPL transfers** — signed and broadcast without manual input
+- **Raydium swaps** — direct-route token swaps via Raydium Trade API
 - **pump.fun graduation detection** — live WebSocket feed, scores newly graduated tokens
-- **Jupiter V6 swaps** — best-route token swaps across all Solana DEXes
-- **Autonomous trading loop** — continuous monitoring + 3x strategy execution
-- **Weather arbitrage scanner** — NOAA point-forecast vs Polymarket YES token spread detection
-- **Background scanner manager** — non-blocking `setInterval` runners for both strategies
-- **OpenClaw skill** — natively links to your agent to understand natural language commands
+- **Polymarket weather arbitrage** — Open-Meteo global forecasts vs Polymarket bracket prices; buys underpriced YES shares across 9 cities
+- **Background scanner manager** — non-blocking `setInterval` daemon for the weather arb strategy
+- **OpenClaw plugin** — 6 tools for natural language control via your agent
 
 ## Prerequisites
-- **Node.js 24+**: This project utilizes Node 24's native `--experimental-transform-types` flag, entirely bypassing the need for `tsc`, `ts-node`, or a `dist` folder.
-- **OpenClaw**: Configured and running locally.
+
+- **Node.js 22+** (uses native fetch — no node-fetch needed)
+- **pnpm** — package manager
+- **tsx** — TypeScript runner (installed as dev dependency)
+- **OpenClaw** — configured and running locally
 
 ## Quick start
 
 ```bash
-# 1. Clone the repository
+# 1. Clone and install
 git clone https://github.com/inspiration-gx/raphael-solana
 cd raphael-solana
 pnpm install
 
-# 2. Create the global executable (No build step required)
-cat << 'EOF' > /usr/local/bin/solana-wallet
-#!/bin/bash
-node --experimental-transform-types /root/raphael-solana/bin/solana-wallet.ts "$@"
-EOF
-chmod +x /usr/local/bin/solana-wallet
-
-# 3. Configure environment and Master Keys
+# 2. Configure environment
 cp .env.example .env
-MASTER_ENCRYPTION_PASSWORD_CRYPTO=your-password node --experimental-transform-types scripts/setup-master-key.ts
+# Edit .env with your values, then generate the master key:
+MASTER_ENCRYPTION_PASSWORD_CRYPTO=your-password pnpm tsx scripts/setup-master-key.ts
+# Paste the output MASTER_ENCRYPTED and MASTER_SALT into .env
 
-# Open .env and paste the generated MASTER_ENCRYPTED + MASTER_SALT values.
-
-# 4. Test the CLI
-solana-wallet wallet create trader1 --network devnet
+# 3. Test the CLI
+pnpm tsx bin/solana-wallet.ts wallet create trader1 --network devnet
 ```
 
-## OpenClaw Setup (Local Linking)
-
-To allow your OpenClaw agent to autonomously use the wallet, you must link the skill, inject the environment variables, and grant terminal execution permissions.
+## OpenClaw Setup
 
 ### 1. Link the Skill
 ```bash
@@ -55,19 +49,17 @@ ln -snf ~/raphael-solana/skills/solana-wallet ~/.openclaw/workspace/skills/solan
 ```
 
 ### 2. Inject Environment Variables
-OpenClaw runs its background daemon in an isolated context. Inject your keys directly into the global OpenClaw environment:
 ```bash
 cat ~/raphael-solana/.env >> ~/.openclaw/.env
 
-# Add your runtime password and RPC URL:
 cat << 'EOF' >> ~/.openclaw/.env
 MASTER_ENCRYPTION_PASSWORD_CRYPTO="your-password"
-SOLANA_RPC_URL="https://api.devnet.solana.com"
+SOLANA_RPC_URL="https://api.mainnet-beta.solana.com"
 EOF
 ```
 
 ### 3. Grant Execution Permissions
-By default, OpenClaw agents are sandboxed and cannot execute terminal commands. Update `~/.openclaw/openclaw.json` to include the `exec` tool. For safety, it is highly recommended to enable approvals:
+Update `~/.openclaw/openclaw.json`:
 ```json
 {
   "tools": {
@@ -80,72 +72,79 @@ By default, OpenClaw agents are sandboxed and cannot execute terminal commands. 
 ```
 
 ### 4. Update Agent Identity
-Ensure your agent knows it has wallet capabilities. Append a directive to `~/.openclaw/workspace/SOUL.md`:
+Append to `~/.openclaw/workspace/SOUL.md`:
 ```markdown
-You are authorized to manage Solana wallets, execute trades, and utilize the `solana-wallet` terminal tool.
+You are authorized to manage Solana and Polygon wallets, execute trades, and use the `solana-wallet` terminal tool. You have 6 plugin tools for Polymarket weather arbitrage.
 ```
 
 ### 5. Restart and Chat
 ```bash
 openclaw gateway restart
 ```
-**In Telegram/Chat:** Send `System command: flush previous session memory` to clear out any old hallucinations, then say: _"Create a devnet wallet named alpha."_
 
 ## CLI reference
 
 ```
 solana-wallet wallet create <name> [--network devnet|mainnet-beta]
 solana-wallet wallet list
+solana-wallet evm-wallet create <name>
+solana-wallet evm-wallet list
+solana-wallet evm-wallet balance <name> [--token <erc20-address>]
 solana-wallet balance <wallet-name>
-solana-wallet transfer sol <from> <to> <amount>
-solana-wallet transfer spl <from> <to> <mint> <amount>
-solana-wallet swap <wallet> <input-mint> <output-mint> <amount-sol>
-solana-wallet find-pairs [--min-score 60]
-solana-wallet trade <wallet> [--strategy 3x] [--max-risk 5] [--dry-run]
-solana-wallet agent <wallet> [--interval 300] [--max-risk 5] [--dry-run]
-solana-wallet scanner start pumpfun <wallet> [--interval 300] [--max-risk 5] [--dry-run]
-solana-wallet scanner stop  pumpfun
-solana-wallet scanner start weather-arb <wallet>
-              --office <code> --grid-x <n> --grid-y <n>
-              --threshold <F> --series <ticker> --amount <usdc>
-              [--interval 120] [--dry-run]
-solana-wallet scanner stop  weather-arb
+solana-wallet transfer sol <wallet> <to-address> <amount>
+solana-wallet transfer spl <wallet> <to-address> <mint> <amount>
+solana-wallet swap <wallet> SOL <output-mint> <amount>
+solana-wallet find-pairs
+solana-wallet scanner start polymarket-weather <evm-wallet-name>
+              --amount <usdc-per-trade>
+              [--cities nyc,london,seoul,chicago,dallas,miami,paris,toronto,seattle]
+              [--max-position <usdc>]
+              [--min-edge 0.20]
+              [--min-fair-value 0.40]
+              [--interval <seconds>]
+              [--dry-run]
+solana-wallet scanner stop
 solana-wallet scanner status
 ```
 
-### Weather arb flags
+### Polymarket weather scanner flags
 
 | Flag | Default | Description |
 |---|---|---|
-| `--office` | required | NOAA office code (OKX = NYC, LOT = Chicago, SEW = Seattle) |
-| `--grid-x` | required | NOAA gridpoint X coordinate |
-| `--grid-y` | required | NOAA gridpoint Y coordinate |
-| `--threshold` | required | Temperature in °F that the binary event is priced on |
-| `--series` | required | Kalshi series ticker (e.g. KXHIGHNY, KXHIGHCHI, KXHIGHLA) |
 | `--amount` | required | USDC to spend per trade |
+| `--cities` | all 9 | Comma-separated city keys (see table below) |
+| `--max-position` | 10 | Hard cap USDC per bracket |
+| `--min-edge` | 0.20 | Minimum edge (fairValue − askPrice) to trigger a trade |
+| `--min-fair-value` | 0.40 | Minimum fair probability to consider trading |
 | `--interval` | 120 | Poll interval in seconds |
-| `--dry-run` | false | Log decisions without executing trades |
+| `--dry-run` | false | Log decisions without placing orders |
 
-### Known Kalshi series tickers
+### Supported cities
 
-| City | Series ticker | NOAA office |
+| Key | City | Exchange |
 |---|---|---|
-| New York City | `KXHIGHNY` | OKX |
-| Chicago | `KXHIGHCHI` | LOT |
-| Los Angeles | `KXHIGHLA` | LOX |
-| Miami | `KXHIGHMI` | MFL |
-| Austin | `KXHIGHAU` | EWX |
+| `nyc` | New York City | Polymarket |
+| `london` | London | Polymarket |
+| `seoul` | Seoul | Polymarket |
+| `chicago` | Chicago | Polymarket |
+| `dallas` | Dallas | Polymarket |
+| `miami` | Miami | Polymarket |
+| `paris` | Paris | Polymarket |
+| `toronto` | Toronto | Polymarket |
+| `seattle` | Seattle | Polymarket |
 
 ## Security model
 
-Three-layer encryption — your private keys are never in plaintext on disk:
+Three-layer encryption — private keys are never in plaintext on disk:
 
 ```
 MASTER_ENCRYPTION_PASSWORD_CRYPTO  (memory only, from env var)
   ↓ PBKDF2 (100k iterations, SHA-256)
 MASTER_ENCRYPTED + MASTER_SALT     (in .env — useless without the password)
   ↓ AES-256-GCM decrypt → master key
-wallet private key                 (AES-256-GCM encrypted, in ~/.solana-agent-wallets.json)
+wallet private key                 (AES-256-GCM encrypted, per-wallet salt)
+  Solana wallets → ~/.raphael/wallets.json
+  EVM wallets    → ~/.raphael/evm-wallets.json
 ```
 
 ## The 3x strategy
@@ -155,38 +154,44 @@ wallet private key                 (AES-256-GCM encrypted, in ~/.solana-agent-wa
 3. On **graduation** (token completes bonding curve → migrates to Raydium):
    - Scores the token 0-100 based on buy pressure, volume, trade count
    - Confirms Raydium liquidity via DexScreener
-   - If score ≥ 65 and liquidity ≥ $10k → executes a Jupiter swap
+   - If score ≥ 65 and liquidity ≥ $10k → executes a Raydium swap
 4. Target: 3x | Stop-loss: 30%
 
-## The weather arbitrage strategy
+## The Polymarket weather arbitrage strategy
 
-Exploits the spread between NOAA gridpoint temperature forecasts and Kalshi bracket-sum probability for the same city.
+Exploits the spread between **Open-Meteo global temperature forecasts** and **Polymarket binary bracket prices** for the same city.
 
-**Edge fires when both conditions hold:**
-- NOAA forecast confidence ≥ 90%
-- Kalshi bracket-sum probability ≤ 40% (market underpricing the event)
+**How it works:**
+1. Fetches today's high temperature forecast from Open-Meteo (free, global, no API key)
+2. Fetches open Polymarket weather bracket markets for the city via the Gamma API
+3. Computes **fair probability** for each bracket using a normal distribution:
+   - σ = 2°F for same-day markets, σ = 4°F for next-day markets
+   - P(bracket) = CDF(hi + 0.5°F) − CDF(lo − 0.5°F)
+4. Compares fair probability to the Polymarket ask price (edge = fair − ask)
+5. Places a YES order via the Polymarket CLOB if edge ≥ `minEdge` and fair value ≥ `minFairValue`
 
-P(high ≥ threshold) is computed by summing `yes_ask_dollars` across all open Kalshi brackets where `lowerBound ≥ threshold`. Execution swaps USDC for the YES-outcome SPL token via Jupiter. Set `DFLOW_API_KEY` to enable live execution (DFlow resolves the SPL mint from the Kalshi ticker). Without the key, the scanner runs in read-only mode regardless of `--dry-run`.
+**Risk controls:**
+- Hard cap per bracket (`--max-position`, default $10)
+- Already-positioned check (won't double-up on the same bracket)
+- USDC balance check before every order
+- `--dry-run` mode logs all decisions without placing orders
 
-**Confidence model:**
+**Requires a funded Polygon wallet.** Bridge USDC from Solana or an exchange to your Polygon address using [Portal Bridge](https://portalbridge.com) or withdraw directly from an exchange that supports Polygon PoS.
 
-| Forecast vs threshold | Confidence |
-|---|---|
-| ≥ +5 °F above threshold | 95% |
-| 0 – +4 °F above threshold | 70% |
-| Below threshold | 10% |
-
-Scanner polls every 2 minutes. Always start with `--dry-run` to review readings before going live.
+Always run with `--dry-run` first to verify edge detection is working before going live.
 
 ## OpenClaw plugin tools
 
-The skill exposes three tools via `src/plugin.ts` (entry point: `dist/plugin.js`):
+The skill exposes **6 tools** via `src/plugin.ts`:
 
 | Tool | Description |
 |---|---|
-| `start_weather_arb` | Start the weather arb scanner with city + token config |
-| `stop_weather_arb` | Stop the running weather arb scanner |
-| `get_strategy_status` | Formatted status of both pumpfun and weather_arb scanners |
+| `create_evm_wallet` | Create a Polygon wallet; returns the address to send USDC to |
+| `list_evm_wallets` | List existing EVM wallets and their Polygon addresses |
+| `check_usdc_balance` | Check USDC.e balance on Polygon to confirm funds arrived |
+| `start_weather_arb` | Start the Polymarket weather arb scanner (use `dry_run: true` first) |
+| `stop_weather_arb` | Stop the running scanner |
+| `get_strategy_status` | Per-city forecast, bracket, edge%, and skip reasons |
 
 Your agent can invoke these directly without any CLI commands.
 
@@ -194,28 +199,45 @@ Your agent can invoke these directly without any CLI commands.
 
 ```
 src/
-  environment.ts      env vars (lazy validation)
-  crypto.ts           AES-GCM + PBKDF2 (Web Crypto API)
-  db.ts               JSON wallet store
-  wallet.ts           create / load / list wallets
-  balance.ts          SOL + SPL balances
-  transfer.ts         SOL + SPL transfers
-  swap.ts             Jupiter V6 swaps
-  screener.ts         pump.fun WebSocket + scoring
-  strategy.ts         3x decision engine
-  agent.ts            runPumpfunTick (one tick) + runAgentLoop (CLI blocking loop)
-  weatherArb.ts       NOAA fetch, confidence model, Kalshi bracket-sum oracle, tick
-  strategyManager.ts  setInterval singleton managing both scanners
-  plugin.ts           OpenClaw plugin entry point (3 tools)
-  types.ts            all TypeScript types
+  environment.ts          env vars (lazy validation, accessed at call time)
+  crypto.ts               AES-GCM + PBKDF2 (Web Crypto API)
+  db.ts                   JSON wallet store (Solana)
+  wallet.ts               create / load / list Solana wallets
+  evmWallet.ts            create / load / list EVM wallets (Polygon/secp256k1)
+  balance.ts              SOL + SPL balances
+  evmBalance.ts           MATIC + ERC-20 balances on Polygon
+  transfer.ts             SOL + SPL transfers
+  swap.ts                 Raydium Trade API swaps (3-step; direct route; min 1M lamports)
+  screener.ts             pump.fun WebSocket + scoring
+  strategy.ts             3x decision engine
+  agent.ts                runPumpfunTick (one tick) + runAgentLoop (CLI blocking loop)
+  polymarketOracle.ts     Open-Meteo forecast, Polymarket Gamma bracket fetch, normal-CDF pricing
+  polymarketClob.ts       Polymarket CLOB L1/L2 auth, placeOrder, getOpenOrders, cancelOrder
+  polymarketWeatherArb.ts runPolymarketWeatherArbTick — per-city scan → position check → order
+  strategyManager.ts      setInterval singleton managing the weather arb daemon
+  plugin.ts               OpenClaw plugin entry point (6 tools)
+  types.ts                all TypeScript types
 
 bin/
-  solana-wallet.ts    CLI entry point
+  solana-wallet.ts        CLI entry point
 
 scripts/
-  setup-master-key.ts  Encryption key generator
+  setup-master-key.ts     Encryption key generator
 
 skills/
   solana-wallet/
-    SKILL.md           OpenClaw skill descriptor + agent instructions
+    SKILL.md              OpenClaw skill descriptor + agent instructions
 ```
+
+## Environment variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `MASTER_ENCRYPTION_PASSWORD_CRYPTO` | ✓ | Root password for key derivation |
+| `MASTER_ENCRYPTED` | ✓ | Encrypted master key (base64) |
+| `MASTER_SALT` | ✓ | Master key salt (base64) |
+| `SOLANA_RPC_URL` | optional | RPC endpoint (default: devnet) |
+| `RAPHAEL_DATA_DIR` | optional | Data directory (default: `~/.raphael`) |
+| `WALLET_STORE_PATH` | optional | Solana wallet JSON (default: `$RAPHAEL_DATA_DIR/wallets.json`) |
+| `EVM_WALLET_STORE_PATH` | optional | EVM wallet JSON (default: `$RAPHAEL_DATA_DIR/evm-wallets.json`) |
+| `PUMPPORTAL_WS` | optional | pump.fun WS (default: `wss://pumpportal.fun/api/data`) |
