@@ -13,6 +13,7 @@ import { findHighPotentialPairs } from "../src/screener.ts";
 import { strategyManager } from "../src/strategyManager.ts";
 import { createEvmWallet, listEvmWallets } from "../src/evmWallet.ts";
 import { getEvmBalance, getTokenBalance } from "../src/evmBalance.ts";
+import { transferMatic, transferErc20 } from "../src/evmTransfer.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 
@@ -67,9 +68,12 @@ Commands:
   wallet list
   evm-wallet create <name>
   evm-wallet list
+  evm-wallet balance <name> [--token <erc20-address>]
   balance <wallet-name>
   transfer sol <wallet> <to-address> <amount>
   transfer spl <wallet> <to-address> <mint> <amount>
+  transfer matic <wallet> <to-address> <amount>
+  transfer erc20 <wallet> <to-address> <token-address> <amount>
   swap <wallet> SOL <output-mint> <amount>
   find-pairs
   scanner start polymarket-weather <evm-wallet-name>
@@ -118,12 +122,17 @@ Commands:
       return;
     }
     if (sub === "spl") {
-      const r = await transferSPL(
-        args[2],
-        args[3],
-        args[4],
-        parseFloat(args[5]),
-      );
+      const r = await transferSPL(args[2], args[3], args[4], parseFloat(args[5]));
+      console.log(JSON.stringify(r));
+      return;
+    }
+    if (sub === "matic") {
+      const r = await transferMatic(args[2], args[3], parseFloat(args[4]));
+      console.log(JSON.stringify(r));
+      return;
+    }
+    if (sub === "erc20") {
+      const r = await transferErc20(args[2], args[3], args[4], parseFloat(args[5]));
       console.log(JSON.stringify(r));
       return;
     }

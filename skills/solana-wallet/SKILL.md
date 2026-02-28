@@ -48,6 +48,8 @@ node --experimental-transform-types /root/raphael-solana/bin/solana-wallet.ts
 | List Solana wallets | `<prefix> wallet list` |
 | Transfer SOL | `<prefix> transfer sol <wallet> <to-address> <amount>` |
 | Transfer SPL token | `<prefix> transfer spl <wallet> <to-address> <mint> <amount>` |
+| Transfer MATIC | `<prefix> transfer matic <wallet> <to-address> <amount>` |
+| Transfer ERC-20 (USDC etc.) | `<prefix> transfer erc20 <wallet> <to-address> <token-address> <amount>` |
 | Swap tokens | `<prefix> swap <wallet> SOL <output-mint> <amount>` |
 | Find pump.fun plays | `<prefix> find-pairs` |
 
