@@ -3,7 +3,7 @@ name: solana-wallet
 description: >
   Manage Solana and Polygon wallets, run Polymarket weather arbitrage, post to X/Twitter,
   and execute Raydium swaps — all from natural language.
-version: 1.1.0
+version: 1.1.1
 homepage: https://github.com/inspi-writer001/raphael-solana
 user-invocable: true
 metadata:

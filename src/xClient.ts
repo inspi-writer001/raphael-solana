@@ -1,4 +1,5 @@
-import { TwitterApi, TwitterApiReadWrite, TwitterApiReadOnly } from "twitter-api-v2"
+import { TwitterApi } from "twitter-api-v2"
+import type { TwitterApiReadWrite, TwitterApiReadOnly } from "twitter-api-v2"
 import { TwitterApiRateLimitPlugin } from "@twitter-api-v2/plugin-rate-limit"
 import type { XConfig, Tweet, XUser } from "./types.ts"
 
