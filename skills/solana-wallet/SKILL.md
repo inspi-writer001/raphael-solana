@@ -3,7 +3,7 @@ name: solana-wallet
 description: >
   Manage Solana and Polygon wallets, run Polymarket weather arbitrage, post to X/Twitter,
   and execute Raydium swaps — all from natural language.
-version: 1.0.3
+version: 1.1.0
 homepage: https://github.com/inspi-writer001/raphael-solana
 user-invocable: true
 metadata:
@@ -12,7 +12,6 @@ metadata:
     primaryEnv: MASTER_ENCRYPTION_PASSWORD_CRYPTO
     requires:
       env:
-        - RAPHAEL_INSTALL_DIR
         - MASTER_ENCRYPTION_PASSWORD_CRYPTO
         - MASTER_ENCRYPTED
         - MASTER_SALT
@@ -25,6 +24,9 @@ metadata:
       anyBins:
         - node
         - tsx
+    install:
+      node:
+        - "."
     os:
       - macos
       - linux
@@ -41,28 +43,24 @@ and an X/Twitter strategy — all from natural language.
 
 ## Setup
 
-Set `RAPHAEL_INSTALL_DIR` in your environment to the directory where you cloned this repo:
+This skill is self-contained. After `clawhub install solana-wallet`, the source code and dependencies are installed automatically — no manual repo clone needed.
 
-```bash
-# In your ~/.openclaw/.env or shell profile:
-RAPHAEL_INSTALL_DIR=/path/to/raphael-solana
-```
-
-Then add the other required credentials (see **Credential Model** below).
+Add your credentials to `~/.openclaw/.env` (see **Environment Variables** below).
 
 ## Execution Rules
 
-1. **Build the CLI prefix from the install directory env var:**
+1. **The CLI is bundled with this skill. The exec prefix is:**
    ```
-   node --experimental-transform-types $RAPHAEL_INSTALL_DIR/bin/solana-wallet.ts
+   node --experimental-transform-types {baseDir}/bin/solana-wallet.ts
    ```
-2. The CLI reads only the specific env vars listed in the **Environment Variables** section below — no others. Run it in the same shell session where those vars are set.
+   `{baseDir}` is resolved by OpenClaw to this skill's installation directory.
+2. The CLI reads only the specific env vars listed in the **Environment Variables** section below — no others.
 3. **Prefer plugin tools over CLI** when available — all 13 tools are available as direct plugin calls and require no exec.
 4. The following Node.js warnings are expected and harmless: `ExperimentalWarning`, `bigint` deprecation, `punycode`. Disregard them in output parsing.
 
 ## Plugin Tools (use these first — no exec needed)
 
-These 13 tools are registered by [`src/plugin.ts`](https://github.com/inspi-writer001/raphael-solana/blob/main/src/plugin.ts) when the skill is loaded into the OpenClaw runtime. They are part of the repository at `RAPHAEL_INSTALL_DIR` — not bundled in this SKILL.md package. OpenClaw loads them automatically alongside these instructions.
+These 13 tools are registered by [`src/plugin.ts`](https://github.com/inspi-writer001/raphael-solana/blob/main/src/plugin.ts), bundled in this skill package at `{baseDir}/src/plugin.ts`. OpenClaw loads them automatically when the skill is activated.
 
 ### Wallet & Polymarket
 
@@ -91,7 +89,7 @@ These 13 tools are registered by [`src/plugin.ts`](https://github.com/inspi-writ
 
 The CLI prefix for ALL commands below is:
 ```
-node --experimental-transform-types $RAPHAEL_INSTALL_DIR/bin/solana-wallet.ts
+node --experimental-transform-types {baseDir}/bin/solana-wallet.ts
 ```
 
 ### Solana Wallet Commands
@@ -129,7 +127,7 @@ node --experimental-transform-types $RAPHAEL_INSTALL_DIR/bin/solana-wallet.ts
 
 **Start X strategy (full command):**
 ```
-node --experimental-transform-types $RAPHAEL_INSTALL_DIR/bin/solana-wallet.ts scanner start x \
+node --experimental-transform-types {baseDir}/bin/solana-wallet.ts scanner start x \
   --handle <bot-handle> \
   [--keywords "pump.fun,graduation"] \
   [--post-trade-updates] \
@@ -144,12 +142,12 @@ node --experimental-transform-types $RAPHAEL_INSTALL_DIR/bin/solana-wallet.ts sc
 | User says | Command |
 |---|---|
 | Start weather arb | See full command below |
-| Stop scanner | `node --experimental-transform-types $RAPHAEL_INSTALL_DIR/bin/solana-wallet.ts scanner stop` |
-| Check scanner status | `node --experimental-transform-types $RAPHAEL_INSTALL_DIR/bin/solana-wallet.ts scanner status` |
+| Stop scanner | `node --experimental-transform-types {baseDir}/bin/solana-wallet.ts scanner stop` |
+| Check scanner status | `node --experimental-transform-types {baseDir}/bin/solana-wallet.ts scanner status` |
 
 **Start weather arb (full command):**
 ```
-node --experimental-transform-types $RAPHAEL_INSTALL_DIR/bin/solana-wallet.ts scanner start polymarket-weather <evm-wallet-name> \
+node --experimental-transform-types {baseDir}/bin/solana-wallet.ts scanner start polymarket-weather <evm-wallet-name> \
   --amount <usdc-per-trade> \
   [--cities nyc,london,seoul,chicago,dallas,miami,paris,toronto,seattle] \
   [--max-position <usdc>] \
@@ -197,7 +195,6 @@ This is the **complete list** of every environment variable the skill reads. It 
 
 | Variable | What it is | Used by |
 |---|---|---|
-| `RAPHAEL_INSTALL_DIR` | Path to your cloned repo on disk | CLI exec prefix |
 | `MASTER_ENCRYPTION_PASSWORD_CRYPTO` | Your chosen password — held in memory only, never written to disk | Wallet decryption |
 | `MASTER_ENCRYPTED` | AES-256-GCM encrypted master key blob (generated by `pnpm setup`) | Wallet decryption |
 | `MASTER_SALT` | PBKDF2 salt for key derivation (generated by `pnpm setup`) | Wallet decryption |
