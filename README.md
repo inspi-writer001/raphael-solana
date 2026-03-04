@@ -12,8 +12,9 @@ Tell your agent: _"create a solana wallet on devnet/mainnet named sarah", "creat
 - **Raydium swaps** — direct-route token swaps via Raydium Trade API
 - **pump.fun graduation detection** — live WebSocket feed, scores newly graduated tokens
 - **Polymarket weather arbitrage** — Open-Meteo global forecasts vs Polymarket bracket prices; buys underpriced YES shares across 9 cities
-- **Background scanner manager** — non-blocking `setInterval` daemon for the weather arb strategy
-- **OpenClaw plugin** — 6 tools for natural language control via your agent
+- **X / Twitter integration** — post tweets, reply, search, monitor mentions, and auto-post trade updates via the X API v2
+- **Background scanner manager** — non-blocking `setInterval` daemon for the weather arb and X strategies
+- **OpenClaw plugin** — 13 tools for natural language control via your agent
 
 ## Prerequisites
 
@@ -80,7 +81,7 @@ Update `~/.openclaw/openclaw.json`:
 Append to `~/.openclaw/workspace/SOUL.md`:
 
 ```markdown
-You are authorized to manage Solana and Polygon wallets, execute trades, and use the `solana-wallet` terminal tool. You have 6 plugin tools for Polymarket weather arbitrage.
+You are authorized to manage Solana and Polygon wallets, execute trades, and use the `solana-wallet` terminal tool. You have 13 plugin tools: Polymarket weather arbitrage, and X/Twitter read and write operations.
 ```
 
 ### 5. Restart and Chat
@@ -112,9 +113,35 @@ solana-wallet scanner start polymarket-weather <evm-wallet-name>
               [--min-fair-value 0.40]
               [--interval <seconds>]
               [--dry-run]
+solana-wallet x tweet <text>
+solana-wallet x reply <tweet-id> <text>
+solana-wallet x search <query> [--max 10]
+solana-wallet x mentions [--since <tweet-id>]
+solana-wallet x resolve <handle>
+solana-wallet scanner start x --handle <bot-handle>
+              [--keywords "pump.fun,graduation"]
+              [--post-trade-updates]
+              [--auto-reply]
+              [--max-tweets-per-hour 2]
+              [--interval <seconds>]
+              [--dry-run]
 solana-wallet scanner stop
 solana-wallet scanner status
 ```
+
+### X strategy flags
+
+| Flag                    | Default | Description                                              |
+| ----------------------- | ------- | -------------------------------------------------------- |
+| `--handle`              | required | Your bot's X handle (without @)                         |
+| `--keywords`            | none    | Comma-separated keywords to monitor in the search feed   |
+| `--post-trade-updates`  | false   | Auto-tweet a summary whenever a strategy places a trade  |
+| `--auto-reply`          | false   | Auto-reply to incoming mentions (1 per mention, varied)  |
+| `--max-tweets-per-hour` | 2       | Hard cap on outbound tweets (rolling 1-hour window)      |
+| `--interval`            | 60      | Poll interval in seconds (jittered ±20% to avoid patterns) |
+| `--dry-run`             | false   | Log all outbound tweets without sending them             |
+
+> **Rate limits:** Searches require **Basic tier** ($100/mo) or above. Free tier is write-only. The strategy silently skips keyword monitoring if the search endpoint returns a 403.
 
 ### Polymarket weather scanner flags
 
@@ -193,7 +220,9 @@ Always run with `--dry-run` first to verify edge detection is working before goi
 
 ## OpenClaw plugin tools
 
-The skill exposes **6 tools** via `src/plugin.ts`:
+The skill exposes **13 tools** via `src/plugin.ts`:
+
+### Wallet & Polymarket tools
 
 | Tool                  | Description                                                          |
 | --------------------- | -------------------------------------------------------------------- |
@@ -201,10 +230,22 @@ The skill exposes **6 tools** via `src/plugin.ts`:
 | `list_evm_wallets`    | List existing EVM wallets and their Polygon addresses                |
 | `check_usdc_balance`  | Check USDC.e balance on Polygon to confirm funds arrived             |
 | `start_weather_arb`   | Start the Polymarket weather arb scanner (use `dry_run: true` first) |
-| `stop_weather_arb`    | Stop the running scanner                                             |
-| `get_strategy_status` | Per-city forecast, bracket, edge%, and skip reasons                  |
+| `stop_weather_arb`    | Stop the running weather arb scanner                                 |
+| `get_strategy_status` | Per-city forecast, bracket, edge%, skip reasons, and X strategy state |
 
-Your agent can invoke these directly without any CLI commands.
+### X / Twitter tools
+
+| Tool                  | Description                                                                  |
+| --------------------- | ---------------------------------------------------------------------------- |
+| `x_post_tweet`        | Post a tweet from the configured account                                     |
+| `x_reply`             | Reply to a specific tweet by ID                                              |
+| `x_search`            | Search recent tweets (last 7 days); requires Basic+ tier                     |
+| `x_get_mentions`      | Fetch recent mentions of the bot account; optionally paginate with `since_id` |
+| `x_resolve_user`      | Look up a user by @handle and return their user ID                           |
+| `start_x_strategy`    | Start the mention monitor + keyword feed + optional trade-update posting     |
+| `stop_x_strategy`     | Stop the X strategy                                                          |
+
+Your agent can invoke all tools directly without any CLI commands.
 
 ## Architecture
 
@@ -226,8 +267,10 @@ src/
   polymarketOracle.ts     Open-Meteo forecast, Polymarket Gamma bracket fetch, normal-CDF pricing
   polymarketClob.ts       Polymarket CLOB L1/L2 auth, placeOrder, getOpenOrders, cancelOrder
   polymarketWeatherArb.ts runPolymarketWeatherArbTick — per-city scan → position check → order
-  strategyManager.ts      setInterval singleton managing the weather arb daemon
-  plugin.ts               OpenClaw plugin entry point (6 tools)
+  strategyManager.ts      setInterval singleton managing weather arb + X strategy daemons
+  xClient.ts              X API v2 client — OAuth 1.0a writes + Bearer reads (twitter-api-v2)
+  xStrategy.ts            X polling strategy — mentions, keyword feed, trade-triggered posting
+  plugin.ts               OpenClaw plugin entry point (13 tools)
   types.ts                all TypeScript types
 
 bin/
@@ -253,3 +296,20 @@ skills/
 | `WALLET_STORE_PATH`                 | optional | Solana wallet JSON (default: `$RAPHAEL_DATA_DIR/wallets.json`)  |
 | `EVM_WALLET_STORE_PATH`             | optional | EVM wallet JSON (default: `$RAPHAEL_DATA_DIR/evm-wallets.json`) |
 | `PUMPPORTAL_WS`                     | optional | pump.fun WS (default: `wss://pumpportal.fun/api/data`)          |
+| `X_API_KEY`                         | X writes | OAuth 1.0a consumer key (from developer.x.com)                  |
+| `X_API_SECRET`                      | X writes | OAuth 1.0a consumer secret                                      |
+| `X_ACCESS_TOKEN`                    | X writes | OAuth 1.0a user access token                                    |
+| `X_ACCESS_TOKEN_SECRET`             | X writes | OAuth 1.0a user access token secret                             |
+| `X_BEARER_TOKEN`                    | X reads  | OAuth 2.0 app-only bearer token (required for search/timelines) |
+
+> **X API tiers:** Free tier supports writes only (1,500 tweets/month). Basic tier ($100/mo) adds search and timeline reads. The strategy gracefully skips search if the bearer token lacks access.
+
+### Obtaining X credentials
+
+1. Go to [developer.x.com](https://developer.x.com) and create a project + app
+2. Under **Keys and Tokens**, generate:
+   - API Key & Secret → `X_API_KEY`, `X_API_SECRET`
+   - Access Token & Secret (for your bot account) → `X_ACCESS_TOKEN`, `X_ACCESS_TOKEN_SECRET`
+   - Bearer Token → `X_BEARER_TOKEN`
+3. Set the app permissions to **Read and Write** before generating the access token
+4. Add all five values to your `.env`
