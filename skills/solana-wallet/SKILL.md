@@ -3,8 +3,8 @@ name: solana-wallet
 description: >
   Manage Solana and Polygon wallets, run Polymarket weather arbitrage, post to X/Twitter,
   and execute Raydium swaps — all from natural language.
-version: 1.0.2
-homepage: https://github.com/inspiration-gx/raphael-solana
+version: 1.0.3
+homepage: https://github.com/inspi-writer001/raphael-solana
 user-invocable: true
 metadata:
   openclaw:
@@ -32,6 +32,10 @@ metadata:
 
 # Solana + Polymarket + X Wallet Agent Skill
 
+**Source code:** https://github.com/inspi-writer001/raphael-solana
+
+All code executed by this skill lives in that public repository. Review it before providing credentials or enabling live trading.
+
 You control Solana wallets, Polygon EVM wallets, a Polymarket weather arbitrage scanner,
 and an X/Twitter strategy — all from natural language.
 
@@ -57,6 +61,8 @@ Then add the other required credentials (see **Credential Model** below).
 4. The following Node.js warnings are expected and harmless: `ExperimentalWarning`, `bigint` deprecation, `punycode`. Disregard them in output parsing.
 
 ## Plugin Tools (use these first — no exec needed)
+
+These 13 tools are registered by [`src/plugin.ts`](https://github.com/inspi-writer001/raphael-solana/blob/main/src/plugin.ts) when the skill is loaded into the OpenClaw runtime. They are part of the repository at `RAPHAEL_INSTALL_DIR` — not bundled in this SKILL.md package. OpenClaw loads them automatically alongside these instructions.
 
 ### Wallet & Polymarket
 
