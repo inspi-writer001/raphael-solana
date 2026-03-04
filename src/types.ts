@@ -199,6 +199,47 @@ export type PolymarketWeatherReading = {
   scannedAt: number
 }
 
+// ── X / Twitter ──────────────────────────────────────────────────────────────
+
+export type XConfig = {
+  apiKey: string
+  apiSecret: string
+  accessToken: string
+  accessTokenSecret: string
+  bearerToken: string
+}
+
+export type Tweet = {
+  id: string
+  text: string
+  authorId?: string
+  createdAt: string
+  conversationId?: string
+}
+
+export type XUser = {
+  id: string
+  name: string
+  username: string
+}
+
+export type XStrategyConfig = {
+  /** X handle of this bot account (without @) */
+  handle: string
+  /** Keywords to search and monitor (Basic+ tier only) */
+  monitorKeywords: string[]
+  /** Auto-reply to mentions with a canned response (dry_run ignores this) */
+  autoReplyToMentions: boolean
+  /** Automatically post a tweet when any strategy fires a trade */
+  postTradeUpdates: boolean
+  /** Hard cap on tweets sent per hour (default 2) */
+  maxTweetsPerHour: number
+  /** If true, no tweets are actually sent */
+  dryRun: boolean
+  /** Poll interval for mentions + keyword feed (seconds, default 60) */
+  intervalSeconds: number
+}
+
 // ── Strategy Manager ─────────────────────────────────────────────────────────
 export type StrategyStatus = {
   pumpfun: {
@@ -211,6 +252,12 @@ export type StrategyStatus = {
     lastCheckAt: string | null
     cities: string[]
     lastReadings: PolymarketWeatherReading[]
+  }
+  x_strategy: {
+    running: boolean
+    lastCheckAt: string | null
+    tweetsThisHour: number
+    lastTweetId: string | null
   }
   _source?: "live" | "file" | "default" | "dead_daemon_cleanup"
   _stale?: boolean

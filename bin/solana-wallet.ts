@@ -14,6 +14,8 @@ import { strategyManager } from "../src/strategyManager.ts";
 import { createEvmWallet, listEvmWallets } from "../src/evmWallet.ts";
 import { getEvmBalance, getTokenBalance } from "../src/evmBalance.ts";
 import { transferMatic, transferErc20 } from "../src/evmTransfer.ts";
+import { createXClients, postTweet, replyToTweet, searchTweets, getMentions, resolveUser } from "../src/xClient.ts";
+import type { XConfig, XStrategyConfig } from "../src/types.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 
@@ -76,11 +78,21 @@ Commands:
   transfer erc20 <wallet> <to-address> <token-address> <amount>
   swap <wallet> SOL <output-mint> <amount>
   find-pairs
+  x tweet <text>
+  x reply <tweet-id> <text>
+  x search <query> [--max 10]
+  x mentions [--since <tweet-id>]
+  x resolve <handle>
   scanner start polymarket-weather <evm-wallet-name>
                 --cities nyc,london,seoul,chicago,dallas,miami,paris,toronto,seattle
                 --amount <usdc-per-trade>  [--max-position <usdc>]
                 [--min-edge 0.20]          [--min-fair-value 0.40]
                 [--interval <seconds>]     [--dry-run]
+  scanner start x --handle <bot-handle>
+                  [--keywords "pump.fun,graduation"]
+                  [--post-trade-updates]   [--auto-reply]
+                  [--max-tweets-per-hour 2] [--interval <seconds>]
+                  [--dry-run]
   scanner stop
   scanner status   (alias: status)`);
     return;
@@ -158,6 +170,65 @@ Commands:
     return;
   }
 
+  // --- X / Twitter ---
+  if (cmd === "x") {
+    const xConfig: XConfig = {
+      apiKey:            process.env["X_API_KEY"]             ?? "",
+      apiSecret:         process.env["X_API_SECRET"]          ?? "",
+      accessToken:       process.env["X_ACCESS_TOKEN"]        ?? "",
+      accessTokenSecret: process.env["X_ACCESS_TOKEN_SECRET"] ?? "",
+      bearerToken:       process.env["X_BEARER_TOKEN"]        ?? "",
+    }
+    const clients = createXClients(xConfig)
+
+    if (sub === "tweet") {
+      const text = args.slice(2).join(" ")
+      if (!text) { console.error("Usage: x tweet <text>"); process.exit(1) }
+      const tweet = await postTweet(clients.rw, text.slice(0, 280))
+      console.log(`Posted: https://x.com/i/web/status/${tweet.id}`)
+      return
+    }
+
+    if (sub === "reply") {
+      const tweetId = args[2]
+      const text = args.slice(3).join(" ")
+      if (!tweetId || !text) { console.error("Usage: x reply <tweet-id> <text>"); process.exit(1) }
+      const tweet = await replyToTweet(clients.rw, tweetId, text.slice(0, 280))
+      console.log(`Reply posted: https://x.com/i/web/status/${tweet.id}`)
+      return
+    }
+
+    if (sub === "search") {
+      const query = args.slice(2).filter(a => !a.startsWith("--")).join(" ")
+      const max = parseInt(opt("max") ?? "10", 10)
+      if (!query) { console.error("Usage: x search <query> [--max 10]"); process.exit(1) }
+      const tweets = await searchTweets(clients.ro, query, max)
+      if (tweets.length === 0) { console.log("No tweets found."); return }
+      tweets.forEach(t => console.log(`[${t.id}] @${t.authorId ?? "?"}: ${t.text}`))
+      return
+    }
+
+    if (sub === "mentions") {
+      const sinceId = opt("since")
+      const userId = await clients.userId()
+      const mentions = await getMentions(clients.rw, userId, sinceId)
+      if (mentions.length === 0) { console.log("No new mentions."); return }
+      mentions.forEach(t => console.log(`[${t.id}] @${t.authorId ?? "?"}: ${t.text}`))
+      return
+    }
+
+    if (sub === "resolve") {
+      const handle = args[2]
+      if (!handle) { console.error("Usage: x resolve <handle>"); process.exit(1) }
+      const user = await resolveUser(clients.ro, handle)
+      console.log(`@${user.username} (${user.name}) — ID: ${user.id}`)
+      return
+    }
+
+    console.log("Unknown x subcommand. Use: tweet | reply | search | mentions | resolve")
+    return
+  }
+
   // --- EVM Wallet ---
   if (cmd === "evm-wallet") {
     if (sub === "create") {
@@ -191,6 +262,46 @@ Commands:
 
   // --- Scanner Management ---
   if (cmd === "scanner") {
+    // ── start x ──────────────────────────────────────────────────────────────
+    if (sub === "start" && args[2] === "x") {
+      const handle = opt("handle")
+      if (!handle) {
+        console.error("Usage: scanner start x --handle <bot-handle> [--keywords \"a,b\"] [--post-trade-updates] [--auto-reply] [--dry-run]")
+        process.exit(1)
+      }
+
+      const xConfig: XConfig = {
+        apiKey:            process.env["X_API_KEY"]             ?? "",
+        apiSecret:         process.env["X_API_SECRET"]          ?? "",
+        accessToken:       process.env["X_ACCESS_TOKEN"]        ?? "",
+        accessTokenSecret: process.env["X_ACCESS_TOKEN_SECRET"] ?? "",
+        bearerToken:       process.env["X_BEARER_TOKEN"]        ?? "",
+      }
+
+      const strategyConfig: XStrategyConfig = {
+        handle,
+        monitorKeywords:       (opt("keywords") ?? "").split(",").filter(Boolean),
+        autoReplyToMentions:   flag("auto-reply"),
+        postTradeUpdates:      flag("post-trade-updates"),
+        maxTweetsPerHour:      parseInt(opt("max-tweets-per-hour") ?? "2", 10),
+        intervalSeconds:       parseInt(opt("interval") ?? "60", 10),
+        dryRun:                flag("dry-run"),
+      }
+
+      strategyManager.startXStrategy(xConfig, strategyConfig)
+
+      console.log(`✅ X strategy started.`)
+      console.log(`   Handle:        @${handle}`)
+      console.log(`   Keywords:      ${strategyConfig.monitorKeywords.join(", ") || "none"}`)
+      console.log(`   Auto-reply:    ${strategyConfig.autoReplyToMentions}`)
+      console.log(`   Trade updates: ${strategyConfig.postTradeUpdates}`)
+      console.log(`   Max/hr:        ${strategyConfig.maxTweetsPerHour}`)
+      console.log(`   Dry-run:       ${strategyConfig.dryRun}`)
+
+      // Keep process alive — the strategy runs on a setInterval
+      await new Promise(() => {})
+    }
+
     // ── start polymarket-weather ──────────────────────────────────────────────
     if (sub === "start" && args[2] === "polymarket-weather") {
       const walletName = args[3];

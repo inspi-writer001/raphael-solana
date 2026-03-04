@@ -42,6 +42,13 @@ export const PUMPPORTAL_WS = optional(
 // Secondary: DexScreener (free REST, no key)
 export const DEXSCREENER_API = "https://api.dexscreener.com/latest/dex"
 
+// X / Twitter API credentials
+export const X_API_KEY             = optional("X_API_KEY",             "")
+export const X_API_SECRET          = optional("X_API_SECRET",          "")
+export const X_ACCESS_TOKEN        = optional("X_ACCESS_TOKEN",        "")
+export const X_ACCESS_TOKEN_SECRET = optional("X_ACCESS_TOKEN_SECRET", "")
+export const X_BEARER_TOKEN        = optional("X_BEARER_TOKEN",        "")
+
 // Explorer URLs
 export const explorerTx = (sig: string, rpcUrl = SOLANA_RPC_URL): string =>
   rpcUrl.includes("devnet")

@@ -5,8 +5,11 @@ import type {
   StrategyStatus,
   PolymarketWeatherConfig,
   PolymarketWeatherReading,
+  XConfig,
+  XStrategyConfig,
 } from "./types.ts";
 import { runPolymarketWeatherArbTick } from "./polymarketWeatherArb.ts";
+import { createXStrategy } from "./xStrategy.ts";
 
 const RAPHAEL_DATA_DIR =
   process.env["RAPHAEL_DATA_DIR"] ?? path.join(os.homedir(), ".raphael");
@@ -45,15 +48,26 @@ export const createStrategyManager = () => {
   let weatherArbLastCheckAt: string | null = null;
   let isOwnerProcess = false;
 
-  const buildLiveStatus = (): StrategyStatus => ({
-    pumpfun: { running: false, lastGraduations: 0, lastCheckAt: null },
-    weather_arb: {
-      running: weatherArbIntervalId !== null,
-      lastCheckAt: weatherArbLastCheckAt,
-      cities: weatherArbConfig?.cities ?? [],
-      lastReadings: weatherArbLastReadings,
-    },
-  });
+  const xStrategy = createXStrategy();
+
+  const buildLiveStatus = (): StrategyStatus => {
+    const xs = xStrategy.getState();
+    return {
+      pumpfun: { running: false, lastGraduations: 0, lastCheckAt: null },
+      weather_arb: {
+        running: weatherArbIntervalId !== null,
+        lastCheckAt: weatherArbLastCheckAt,
+        cities: weatherArbConfig?.cities ?? [],
+        lastReadings: weatherArbLastReadings,
+      },
+      x_strategy: {
+        running: xs.running,
+        lastCheckAt: xs.lastCheckAt,
+        tweetsThisHour: xs.tweetsThisHour,
+        lastTweetId: xs.lastTweetId,
+      },
+    };
+  };
 
   const saveStatusToDisk = () => {
     try { atomicWriteJSON(STATUS_FILE, buildLiveStatus()); } catch (e) {
@@ -132,7 +146,22 @@ export const createStrategyManager = () => {
     }
   };
 
-  return { startWeatherArb, stopWeatherArb, getStatus, STATUS_FILE, PID_FILE };
+  const startXStrategy = (xConfig: XConfig, strategyConfig: XStrategyConfig) => {
+    isOwnerProcess = true;
+    xStrategy.start(xConfig, strategyConfig);
+    saveStatusToDisk();
+  };
+
+  const stopXStrategy = () => {
+    xStrategy.stop();
+    saveStatusToDisk();
+  };
+
+  const notifyXTrade = (xConfig: XConfig, strategyConfig: XStrategyConfig, summary: string) => {
+    xStrategy.onTrade(xConfig, strategyConfig, summary);
+  };
+
+  return { startWeatherArb, stopWeatherArb, startXStrategy, stopXStrategy, notifyXTrade, getStatus, STATUS_FILE, PID_FILE };
 };
 
 export const strategyManager = createStrategyManager();

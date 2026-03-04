@@ -1,6 +1,11 @@
 import { strategyManager } from "./strategyManager.ts"
 import { createEvmWallet, listEvmWallets, getEvmAddress } from "./evmWallet.ts"
 import { getUsdcBalance } from "./polymarketClob.ts"
+import { createXClients, postTweet, replyToTweet, searchTweets, getMentions, likeTweet, retweetTweet, resolveUser } from "./xClient.ts"
+import {
+  X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET, X_BEARER_TOKEN,
+} from "./environment.ts"
+import type { XConfig, XStrategyConfig } from "./types.ts"
 
 type OpenClawTool = {
   name: string
@@ -294,8 +299,247 @@ export default function register(api: OpenClawAPI): void {
           `  Cities:           ${s.weather_arb.cities.join(", ") || "not configured"}`,
           `  Last check:       ${s.weather_arb.lastCheckAt ?? "never"}`,
           ...cityLines,
+          ``,
+          `── X Strategy ────────────────────────────`,
+          `  Running:          ${s.x_strategy.running}`,
+          `  Tweets this hour: ${s.x_strategy.tweetsThisHour}`,
+          `  Last check:       ${s.x_strategy.lastCheckAt ?? "never"}`,
+          `  Last tweet ID:    ${s.x_strategy.lastTweetId ?? "none"}`,
         ]
         return { content: [{ type: "text" as const, text: lines.join("\n") }] }
+      },
+    },
+    { optional: true },
+  )
+
+  // ── Helper: build XConfig from env ────────────────────────────────────────
+  const getXConfig = (): XConfig => ({
+    apiKey:             X_API_KEY,
+    apiSecret:          X_API_SECRET,
+    accessToken:        X_ACCESS_TOKEN,
+    accessTokenSecret:  X_ACCESS_TOKEN_SECRET,
+    bearerToken:        X_BEARER_TOKEN,
+  })
+
+  // ── x_post_tweet ──────────────────────────────────────────────────────────
+  api.registerTool(
+    {
+      name: "x_post_tweet",
+      description: "Post a tweet from the configured X/Twitter account.",
+      parameters: {
+        type: "object",
+        properties: {
+          text: { type: "string", description: "Tweet text (max 280 chars)" },
+        },
+        required: ["text"],
+      },
+      execute: async (_id, params) => {
+        try {
+          const { text } = params as { text: string }
+          const { rw } = createXClients(getXConfig())
+          const tweet = await postTweet(rw, text.slice(0, 280))
+          return { content: [{ type: "text" as const, text: `Tweet posted: https://x.com/i/web/status/${tweet.id}` }] }
+        } catch (err) {
+          return { content: [{ type: "text" as const, text: `Error posting tweet: ${err instanceof Error ? err.message : String(err)}` }] }
+        }
+      },
+    },
+    { optional: true },
+  )
+
+  // ── x_reply ───────────────────────────────────────────────────────────────
+  api.registerTool(
+    {
+      name: "x_reply",
+      description: "Reply to a specific tweet by ID.",
+      parameters: {
+        type: "object",
+        properties: {
+          tweet_id: { type: "string", description: "ID of the tweet to reply to" },
+          text: { type: "string", description: "Reply text (max 280 chars)" },
+        },
+        required: ["tweet_id", "text"],
+      },
+      execute: async (_id, params) => {
+        try {
+          const { tweet_id, text } = params as { tweet_id: string; text: string }
+          const { rw } = createXClients(getXConfig())
+          const tweet = await replyToTweet(rw, tweet_id, text.slice(0, 280))
+          return { content: [{ type: "text" as const, text: `Reply posted: https://x.com/i/web/status/${tweet.id}` }] }
+        } catch (err) {
+          return { content: [{ type: "text" as const, text: `Error replying: ${err instanceof Error ? err.message : String(err)}` }] }
+        }
+      },
+    },
+    { optional: true },
+  )
+
+  // ── x_search ──────────────────────────────────────────────────────────────
+  api.registerTool(
+    {
+      name: "x_search",
+      description: "Search recent tweets (last 7 days). Requires Basic+ tier on X API.",
+      parameters: {
+        type: "object",
+        properties: {
+          query:       { type: "string", description: "Search query, e.g. \"pump.fun graduation -is:retweet\"" },
+          max_results: { type: "number", description: "Max tweets to return (default 10, max 100)" },
+        },
+        required: ["query"],
+      },
+      execute: async (_id, params) => {
+        try {
+          const { query, max_results } = params as { query: string; max_results?: number }
+          const { ro } = createXClients(getXConfig())
+          const tweets = await searchTweets(ro, query, max_results ?? 10)
+          if (tweets.length === 0) return { content: [{ type: "text" as const, text: "No tweets found." }] }
+          const lines = tweets.map(t => `[${t.id}] @${t.authorId ?? "?"}: ${t.text.slice(0, 120)}`)
+          return { content: [{ type: "text" as const, text: lines.join("\n") }] }
+        } catch (err) {
+          return { content: [{ type: "text" as const, text: `Error searching: ${err instanceof Error ? err.message : String(err)}` }] }
+        }
+      },
+    },
+    { optional: true },
+  )
+
+  // ── x_get_mentions ────────────────────────────────────────────────────────
+  api.registerTool(
+    {
+      name: "x_get_mentions",
+      description: "Fetch recent mentions of the authenticated bot account.",
+      parameters: {
+        type: "object",
+        properties: {
+          since_id: { type: "string", description: "Only return tweets newer than this tweet ID" },
+        },
+      },
+      execute: async (_id, params) => {
+        try {
+          const { since_id } = params as { since_id?: string }
+          const clients = createXClients(getXConfig())
+          const userId = await clients.userId()
+          const mentions = await getMentions(clients.rw, userId, since_id)
+          if (mentions.length === 0) return { content: [{ type: "text" as const, text: "No new mentions." }] }
+          const lines = mentions.map(t => `[${t.id}] @${t.authorId ?? "?"}: ${t.text.slice(0, 120)}`)
+          return { content: [{ type: "text" as const, text: lines.join("\n") }] }
+        } catch (err) {
+          return { content: [{ type: "text" as const, text: `Error fetching mentions: ${err instanceof Error ? err.message : String(err)}` }] }
+        }
+      },
+    },
+    { optional: true },
+  )
+
+  // ── x_resolve_user ────────────────────────────────────────────────────────
+  api.registerTool(
+    {
+      name: "x_resolve_user",
+      description: "Look up a Twitter/X user by @handle and return their user ID.",
+      parameters: {
+        type: "object",
+        properties: {
+          handle: { type: "string", description: "Twitter handle with or without @, e.g. \"elonmusk\"" },
+        },
+        required: ["handle"],
+      },
+      execute: async (_id, params) => {
+        try {
+          const { handle } = params as { handle: string }
+          const { ro } = createXClients(getXConfig())
+          const user = await resolveUser(ro, handle)
+          return { content: [{ type: "text" as const, text: `@${user.username} (${user.name})\n  User ID: ${user.id}` }] }
+        } catch (err) {
+          return { content: [{ type: "text" as const, text: `Error resolving user: ${err instanceof Error ? err.message : String(err)}` }] }
+        }
+      },
+    },
+    { optional: true },
+  )
+
+  // ── start_x_strategy ──────────────────────────────────────────────────────
+  api.registerTool(
+    {
+      name: "start_x_strategy",
+      description:
+        "Start the X/Twitter strategy: polls mentions, monitors keywords, and optionally posts trade updates automatically.",
+      parameters: {
+        type: "object",
+        properties: {
+          handle:                 { type: "string",  description: "Bot's X handle (without @)" },
+          monitor_keywords:       { type: "array", items: { type: "string" }, description: "Keywords to watch, e.g. [\"pump.fun\",\"graduation\"]" },
+          auto_reply_to_mentions: { type: "boolean", description: "Auto-reply to mentions (default false)" },
+          post_trade_updates:     { type: "boolean", description: "Tweet when a trade fires (default true)" },
+          max_tweets_per_hour:    { type: "number",  description: "Hard cap on outbound tweets per hour (default 2)" },
+          interval_seconds:       { type: "number",  description: "Poll interval in seconds (default 60)" },
+          dry_run:                { type: "boolean", description: "Log tweets without sending (default true)" },
+        },
+        required: ["handle"],
+      },
+      execute: async (_id, params) => {
+        try {
+          const p = params as {
+            handle: string
+            monitor_keywords?: string[]
+            auto_reply_to_mentions?: boolean
+            post_trade_updates?: boolean
+            max_tweets_per_hour?: number
+            interval_seconds?: number
+            dry_run?: boolean
+          }
+
+          if (strategyManager.getStatus().x_strategy.running) {
+            return { content: [{ type: "text" as const, text: "X strategy is already running. Use stop_x_strategy first." }] }
+          }
+
+          const config: XStrategyConfig = {
+            handle:                 p.handle,
+            monitorKeywords:        p.monitor_keywords       ?? [],
+            autoReplyToMentions:    p.auto_reply_to_mentions ?? false,
+            postTradeUpdates:       p.post_trade_updates     ?? true,
+            maxTweetsPerHour:       p.max_tweets_per_hour    ?? 2,
+            intervalSeconds:        p.interval_seconds       ?? 60,
+            dryRun:                 p.dry_run                ?? true,
+          }
+
+          strategyManager.startXStrategy(getXConfig(), config)
+
+          return {
+            content: [{
+              type: "text" as const,
+              text: [
+                "X strategy started.",
+                `  Handle:        @${config.handle}`,
+                `  Keywords:      ${config.monitorKeywords.join(", ") || "none"}`,
+                `  Auto-reply:    ${config.autoReplyToMentions}`,
+                `  Trade updates: ${config.postTradeUpdates}`,
+                `  Max tweets/hr: ${config.maxTweetsPerHour}`,
+                `  Interval:      ${config.intervalSeconds}s`,
+                `  Dry run:       ${config.dryRun}`,
+              ].join("\n"),
+            }],
+          }
+        } catch (err) {
+          return { content: [{ type: "text" as const, text: `Error starting X strategy: ${err instanceof Error ? err.message : String(err)}` }] }
+        }
+      },
+    },
+    { optional: true },
+  )
+
+  // ── stop_x_strategy ───────────────────────────────────────────────────────
+  api.registerTool(
+    {
+      name: "stop_x_strategy",
+      description: "Stop the X/Twitter strategy.",
+      parameters: { type: "object", properties: {} },
+      execute: async () => {
+        try {
+          strategyManager.stopXStrategy()
+          return { content: [{ type: "text" as const, text: "X strategy stopped." }] }
+        } catch (err) {
+          return { content: [{ type: "text" as const, text: `Error stopping X strategy: ${err instanceof Error ? err.message : String(err)}` }] }
+        }
       },
     },
     { optional: true },
