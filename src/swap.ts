@@ -6,7 +6,8 @@ import type { SwapResult } from "./types.ts"
 
 const RAYDIUM_SWAP_HOST = "https://transaction-v1.raydium.io"
 
-export const SOL_MINT  = "So11111111111111111111111111111111111111112"
+export const SOL_MINT         = "So11111111111111111111111111111111111111112"
+export const USDC_MINT        = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"  // mainnet USDC
 export const USDC_DEVNET_MINT = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
 
 export const solToLamports = (sol: number): number => Math.floor(sol * LAMPORTS_PER_SOL)
@@ -145,7 +146,7 @@ export const raydiumSwap = async (
   console.log(`[RAYDIUM] Getting quote...`)
   const quoteResponse = await raydiumQuote(inputMint, outputMint, amountLamports, slippageBps)
   if (!quoteResponse.success) {
-    throw new Error(`Quote failed`)
+    throw new Error(`Raydium quote failed: ${JSON.stringify(quoteResponse)}`)
   }
 
   const route = quoteResponse.data!.routePlan

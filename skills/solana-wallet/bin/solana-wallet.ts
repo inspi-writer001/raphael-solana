@@ -8,7 +8,7 @@ import { fileURLToPath } from "url";
 import { createWallet, listWallets } from "../src/wallet.ts";
 import { getPortfolioSummary } from "../src/balance.ts";
 import { transferSOL, transferSPL } from "../src/transfer.ts";
-import { raydiumSwap, solToLamports, SOL_MINT } from "../src/swap.ts";
+import { raydiumSwap, solToLamports, SOL_MINT, USDC_MINT } from "../src/swap.ts";
 import { findHighPotentialPairs } from "../src/screener.ts";
 import { strategyManager } from "../src/strategyManager.ts";
 import { createEvmWallet, listEvmWallets } from "../src/evmWallet.ts";
@@ -76,7 +76,7 @@ Commands:
   transfer spl <wallet> <to-address> <mint> <amount>
   transfer matic <wallet> <to-address> <amount>
   transfer erc20 <wallet> <to-address> <token-address> <amount>
-  swap <wallet> SOL <output-mint> <amount>
+  swap <wallet> <input-mint|SOL|USDC> <output-mint|SOL|USDC> <amount>
   find-pairs
   x tweet <text>
   x reply <tweet-id> <text>
@@ -151,15 +151,21 @@ Commands:
   }
 
   if (cmd === "swap") {
-    const r = await raydiumSwap(
-      sub,
-      SOL_MINT,
-      args[3],
-      solToLamports(parseFloat(args[4])),
-      300,
-      undefined,
-      1,  // direct route only for manual swaps
-    );
+    const resolveMint = (raw: string): string => {
+      if (!raw) throw new Error("Missing mint argument")
+      if (raw.toUpperCase() === "SOL")  return SOL_MINT
+      if (raw.toUpperCase() === "USDC") return USDC_MINT
+      return raw
+    }
+    const inputMint  = resolveMint(args[2])
+    const outputMint = resolveMint(args[3])
+    const amount     = parseFloat(args[4])
+    if (isNaN(amount)) { console.error("Usage: swap <wallet> <input|SOL|USDC> <output|SOL|USDC> <amount>"); process.exit(1) }
+    // For SOL input amount is in SOL; for token inputs amount is in token units (e.g. 2 USDC = 2000000 base units)
+    const amountBase = inputMint === SOL_MINT
+      ? solToLamports(amount)
+      : Math.floor(amount * 1_000_000)  // USDC and most SPL tokens use 6 decimals
+    const r = await raydiumSwap(sub, inputMint, outputMint, amountBase, 300, undefined, 1)
     console.log(JSON.stringify(r));
     return;
   }
